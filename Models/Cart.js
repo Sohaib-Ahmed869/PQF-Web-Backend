@@ -39,11 +39,6 @@ const CartSchema = new mongoose.Schema({
     default: 'active',
     index: true
   },
-  sessionId: {
-    type: String,
-    sparse: true, // For guest carts
-    index: true
-  },
   expiresAt: {
     type: Date,
     default: function() {
@@ -75,7 +70,6 @@ const CartSchema = new mongoose.Schema({
 // Indexes for performance
 CartSchema.index({ user: 1, status: 1 });
 CartSchema.index({ lastUpdated: 1, status: 1 });
-CartSchema.index({ sessionId: 1, status: 1 });
 
 // Virtual for total calculation
 CartSchema.virtual('total').get(function() {

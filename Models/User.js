@@ -61,7 +61,7 @@ const userSchema = new Schema({
   },
   status: {
     type: String,
-    enum: ['active', 'inactive', 'suspended', 'deleted', 'guest'],
+    enum: ['active', 'inactive', 'suspended', 'deleted'],
     default: 'active'
   },
   resetPasswordToken: String,

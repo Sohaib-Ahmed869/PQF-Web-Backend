@@ -30,7 +30,8 @@ const protect = async (req, res, next) => {
     if (!token) {
       return res.status(401).json({
         success: false,
-        message: 'Not authorized to access this route'
+        message: 'No token provided. Access denied.',
+        code: 'NO_TOKEN'
       });
     }
 
@@ -44,7 +45,8 @@ const protect = async (req, res, next) => {
       if (!user) {
         return res.status(401).json({
           success: false,
-          message: 'No user found with this token'
+          message: 'User not found. Token invalid.',
+          code: 'INVALID_USER'
         });
       }
 
@@ -52,7 +54,8 @@ const protect = async (req, res, next) => {
       if (user.status !== 'active') {
         return res.status(401).json({
           success: false,
-          message: 'User account is inactive'
+          message: 'User account is inactive. Please contact support.',
+          code: 'INACTIVE_USER'
         });
       }
 
@@ -60,7 +63,8 @@ const protect = async (req, res, next) => {
       if (user.role === 'admin' && !user.assignedStore) {
         return res.status(403).json({
           success: false,
-          message: 'Admin user must have an assigned store'
+          message: 'Admin user must have an assigned store',
+          code: 'NO_ASSIGNED_STORE'
         });
       }
 
@@ -68,7 +72,8 @@ const protect = async (req, res, next) => {
       if (user.role === 'admin' && user.assignedStore && user.assignedStore.status !== 'active') {
         return res.status(403).json({
           success: false,
-          message: 'Assigned store is inactive'
+          message: 'Assigned store is inactive',
+          code: 'INACTIVE_STORE'
         });
       }
 
@@ -79,24 +84,51 @@ const protect = async (req, res, next) => {
       req.tokenData = {
         id: decoded.id,
         role: decoded.role,
-        assignedStore: decoded.assignedStore
+        assignedStore: decoded.assignedStore,
+        iat: decoded.iat,
+        exp: decoded.exp
       };
 
       next();
 
-    } catch (error) {
-      console.error('Token verification error:', error);
-      return res.status(401).json({
-        success: false,
-        message: 'Not authorized to access this route'
-      });
+    } catch (tokenError) {
+      console.error('Token verification error:', tokenError);
+      
+      // Handle specific JWT errors
+      if (tokenError.name === 'TokenExpiredError') {
+        return res.status(401).json({
+          success: false,
+          message: 'Token has expired. Please log in again.',
+          code: 'TOKEN_EXPIRED',
+          expiredAt: tokenError.expiredAt
+        });
+      } else if (tokenError.name === 'JsonWebTokenError') {
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid token. Please log in again.',
+          code: 'INVALID_TOKEN'
+        });
+      } else if (tokenError.name === 'NotBeforeError') {
+        return res.status(401).json({
+          success: false,
+          message: 'Token not active yet.',
+          code: 'TOKEN_NOT_ACTIVE'
+        });
+      } else {
+        return res.status(401).json({
+          success: false,
+          message: 'Token verification failed. Please log in again.',
+          code: 'TOKEN_VERIFICATION_FAILED'
+        });
+      }
     }
 
   } catch (error) {
     console.error('Auth middleware error:', error);
     return res.status(500).json({
       success: false,
-      message: 'Server error in authentication'
+      message: 'Server error in authentication',
+      code: 'AUTH_SERVER_ERROR'
     });
   }
 };
@@ -107,14 +139,16 @@ const authorize = (...roles) => {
     if (!req.user) {
       return res.status(401).json({
         success: false,
-        message: 'Not authorized to access this route'
+        message: 'Authentication required',
+        code: 'AUTH_REQUIRED'
       });
     }
 
     if (!roles.includes(req.user.role)) {
       return res.status(403).json({
         success: false,
-        message: `User role ${req.user.role} is not authorized to access this route`
+        message: `Access denied. Required roles: ${roles.join(', ')}. Current role: ${req.user.role}`,
+        code: 'INSUFFICIENT_PERMISSIONS'
       });
     }
     
@@ -127,14 +161,16 @@ const requireSuperAdmin = (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({
       success: false,
-      message: 'Not authorized to access this route'
+      message: 'Authentication required',
+      code: 'AUTH_REQUIRED'
     });
   }
 
   if (req.user.role !== 'superAdmin') {
     return res.status(403).json({
       success: false,
-      message: 'Super admin access required'
+      message: 'Super admin access required',
+      code: 'SUPER_ADMIN_REQUIRED'
     });
   }
 
@@ -146,14 +182,16 @@ const requireAdmin = (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({
       success: false,
-      message: 'Not authorized to access this route'
+      message: 'Authentication required',
+      code: 'AUTH_REQUIRED'
     });
   }
 
   if (!['admin', 'superAdmin'].includes(req.user.role)) {
     return res.status(403).json({
       success: false,
-      message: 'Admin access required'
+      message: 'Admin access required',
+      code: 'ADMIN_REQUIRED'
     });
   }
 
@@ -165,7 +203,8 @@ const requireStoreAdmin = (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({
       success: false,
-      message: 'Not authorized to access this route'
+      message: 'Authentication required',
+      code: 'AUTH_REQUIRED'
     });
   }
 
@@ -179,7 +218,8 @@ const requireStoreAdmin = (req, res, next) => {
     if (!req.user.assignedStore) {
       return res.status(403).json({
         success: false,
-        message: 'Admin must have an assigned store'
+        message: 'Admin must have an assigned store',
+        code: 'NO_ASSIGNED_STORE'
       });
     }
     return next();
@@ -187,7 +227,8 @@ const requireStoreAdmin = (req, res, next) => {
 
   return res.status(403).json({
     success: false,
-    message: 'Store admin access required'
+    message: 'Store admin access required',
+    code: 'STORE_ADMIN_REQUIRED'
   });
 };
 
@@ -205,7 +246,8 @@ const validateStoreAccess = (req, res, next) => {
     if (!userStoreId) {
       return res.status(403).json({
         success: false,
-        message: 'Admin user must have an assigned store'
+        message: 'Admin user must have an assigned store',
+        code: 'NO_ASSIGNED_STORE'
       });
     }
 

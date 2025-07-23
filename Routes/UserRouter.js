@@ -21,7 +21,6 @@ const {
   addToWishlist,
   removeFromWishlist,
   getWishlist,
-  mergeGuestWishlist
 } = require('../Controllers/UserController');
 const { protect, requireSuperAdmin } = require("../Middleware/Authentication");
 
@@ -48,7 +47,6 @@ router.get('/address', protect, getUserAddress);
 router.post('/wishlist/add', protect, addToWishlist);
 router.post('/wishlist/remove', protect, removeFromWishlist);
 router.get('/wishlist', protect, getWishlist);
-router.post('/wishlist/merge', protect, mergeGuestWishlist);
 
 // SUPER ADMIN ONLY ROUTES
 

@@ -3,8 +3,8 @@ const Schema = mongoose.Schema;
 
 const PaymentSchema = new Schema({
   order: { type: Schema.Types.ObjectId, ref: 'SalesOrder', required: true },
-  user: { type: Schema.Types.ObjectId, ref: 'User' }, // can be null for guest
-  customer: { type: Schema.Types.ObjectId, ref: 'Customer' }, // can be null for guest
+  user: { type: Schema.Types.ObjectId, ref: 'User' },
+  customer: { type: Schema.Types.ObjectId, ref: 'Customer' },
   paymentIntentId: { type: String, required: true },
   amount: { type: Number, required: true },
   currency: { type: String, default: 'eur' },

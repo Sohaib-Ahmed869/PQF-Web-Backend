@@ -989,28 +989,6 @@ const getWishlist = async (req, res) => {
   }
 };
 
-// Merge guest wishlist into user wishlist after login/registration
-const mergeGuestWishlist = async (req, res) => {
-  try {
-    const { wishlist } = req.body;
-    if (!Array.isArray(wishlist)) {
-      return res.status(400).json({ success: false, message: 'Wishlist must be an array of item IDs' });
-    }
-    const user = await User.findById(req.user._id);
-    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
-    // Filter out invalid IDs and already existing ones
-    const validItemIds = (await Item.find({ _id: { $in: wishlist } }).select('_id')).map(p => p._id.toString());
-    const currentWishlist = user.wishlist.map(id => id.toString());
-    const toAdd = validItemIds.filter(pid => !currentWishlist.includes(pid));
-    user.wishlist.push(...toAdd);
-    await user.save();
-    res.status(200).json({ success: true, message: 'Wishlist merged', wishlist: user.wishlist });
-  } catch (error) {
-    console.error('Merge guest wishlist error:', error);
-    res.status(500).json({ success: false, message: 'Server error while merging wishlist', error: error.message });
-  }
-};
-
 module.exports = {
   register,
   login,
@@ -1031,6 +1009,5 @@ module.exports = {
   getUserAddress,
   addToWishlist,
   removeFromWishlist,
-  getWishlist,
-  mergeGuestWishlist
+  getWishlist
 };

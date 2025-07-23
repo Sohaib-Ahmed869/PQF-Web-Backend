@@ -46,23 +46,6 @@ function flattenOrder(order) {
   return flattened;
 }
 
-// Get all orders for a guest user by email
-const getGuestOrdersByEmail = async (req, res) => {
-  const { email } = req.body;
-  if (!email) {
-    return res.status(400).json({ success: false, message: 'Email is required.' });
-  }
-  // Find the guest user by email
-  const user = await User.findOne({ email: email.toLowerCase(), status: 'guest' });
-  if (!user) {
-    return res.status(404).json({ success: false, message: 'No guest user found with this email.' });
-  }
-  // Find all orders for this user
-  const orders = await SalesOrder.find({ user: user._id }).sort({ createdAt: -1 });
-  const flattened = orders.map(flattenOrder);
-  return res.status(200).json({ success: true, count: flattened.length, data: flattened });
-};
-
 // Update order tracking info
 const updateOrderTracking = async (req, res) => {
   try {
@@ -96,6 +79,5 @@ const updateOrderTracking = async (req, res) => {
 
 module.exports = {
   getUserOrders,
-  getGuestOrdersByEmail,
   updateOrderTracking,
 };

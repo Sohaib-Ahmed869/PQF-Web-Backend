@@ -15,7 +15,6 @@ router.get('/products/search', WebController.searchProducts);
 router.get('/products/:id', WebController.getProductById);
 // Get current user's orders
 router.get('/orders/my', protect, OrderController.getUserOrders);
-router.post('/orders/guest-orders', OrderController.getGuestOrdersByEmail);
 // Update order tracking info (admin or authorized only)
 router.patch('/orders/:orderId/tracking', protect, OrderController.updateOrderTracking);
 

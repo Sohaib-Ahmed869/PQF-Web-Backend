@@ -563,7 +563,12 @@ const OrderSchema = new Schema(
 
     // Add payment reference
     payment: { type: Schema.Types.ObjectId, ref: 'Payment' },
-
+    paymentMethod: { 
+      type: String, 
+      enum: ['card', 'cash', 'cheque', 'bank_transfer'], 
+      default: 'card',
+      required: true
+    },
     // Add user field to track who placed the order
     user: {
       type: mongoose.Schema.Types.ObjectId,
