@@ -21,6 +21,7 @@ app.use(passport.initialize());
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5173',
+  'https://backendpqf.foodservices.live'
 ];
 
 // Add CORS_ORIGIN to allowedOrigins if it exists and is a valid URL
