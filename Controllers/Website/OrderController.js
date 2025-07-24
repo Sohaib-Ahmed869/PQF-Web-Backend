@@ -2,6 +2,7 @@ const SalesOrder = require('../../Models/SalesOrder');
 const User = require('../../Models/User');
 const Cart = require('../../Models/Cart'); // Add this at the top
 const Payment = require('../../Models/Payment'); // Import Payment model
+const mongoose = require('mongoose');
 
 // Get all orders for the currently authenticated user
 const getUserOrders = async (req, res) => {
@@ -228,10 +229,41 @@ const viewReceipt = async (req, res) => {
   }
 };
 
+// Get tracking data for a specific order
+const getOrderTracking = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { orderId } = req.params;
+    let order = null;
+    if (mongoose.Types.ObjectId.isValid(orderId)) {
+      order = await SalesOrder.findOne({ _id: orderId, user: userId });
+    }
+    if (!order) {
+      order = await SalesOrder.findOne({ trackingNumber: orderId, user: userId });
+    }
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+    // Only return tracking-related fields
+    return res.status(200).json({
+      success: true,
+      data: {
+        orderId: order._id,
+        trackingNumber: order.trackingNumber,
+        trackingStatus: order.trackingStatus,
+        trackingHistory: order.trackingHistory
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getUserOrders,
   updateOrderTracking,
   getOrderDetails,
   reorder,
   viewReceipt,
+  getOrderTracking,
 };

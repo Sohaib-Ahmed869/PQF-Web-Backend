@@ -17,6 +17,7 @@ router.get('/products/:id', WebController.getProductById);
 // Get current user's orders
 router.get('/orders/my', protect, OrderController.getUserOrders);
 router.get('/orders/:orderId', protect, OrderController.getOrderDetails);
+router.get('/orders/:orderId/tracking', protect, OrderController.getOrderTracking);
 router.patch('/orders/:orderId/tracking', protect, OrderController.updateOrderTracking);
 router.post('/orders/:orderId/reorder', protect, reorder);
 router.get('/orders/:orderId/receipt', protect, OrderController.viewReceipt);
