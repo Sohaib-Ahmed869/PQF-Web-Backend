@@ -4,6 +4,7 @@ const Customer = require('../Models/Customer');
 const Payment = require('../Models/Payment');
 const Cart = require('../Models/Cart');
 const User = require('../Models/User');
+const { sendOrderConfirmationEmail } = require('../Services/emailService');
 
 // Function to generate tracking number
 const generateTrackingNumber = () => {
@@ -271,6 +272,31 @@ exports.createOrderAfterPayment = async (req, res) => {
     } catch (cartErr) {
       console.error('Error updating cart status:', cartErr);
       // Don't fail the entire request
+    }
+
+    // Send order confirmation email
+    try {
+      const emailData = {
+        orderId: order._id,
+        orderType: orderData.deliveryMethod || 'delivery',
+        paymentMethod: orderData.paymentMethod,
+        paymentStatus: paymentStatus,
+        trackingNumber: trackingNumber,
+        totalPrice: orderData.totalPrice || 0,
+        orderItems: orderData.orderItems,
+        shippingAddress: orderData.shippingAddress,
+        billingAddress: orderData.billingAddress
+      };
+      
+      await sendOrderConfirmationEmail(
+        customerInfo.email,
+        emailData,
+        customerInfo.name
+      );
+      console.log('Order confirmation email sent successfully');
+    } catch (emailError) {
+      console.error('Error sending order confirmation email:', emailError);
+      // Don't fail the order creation if email fails
     }
 
     // Success response

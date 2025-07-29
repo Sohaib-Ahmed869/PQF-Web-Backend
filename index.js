@@ -62,6 +62,8 @@ const userRoutes = require('./Routes/UserRouter');
 const authRouter = require('./Routes/AuthRouter');
 const cartRouter = require('./Routes/CartRouter');
 const paymentRouter = require('./Routes/PaymentRouter');
+const translationRouter = require('./Routes/TranslationRouter');
+const disputeRouter = require('./Routes/DisputeRouter');
 
 // Super Admin Imports
 const storeRoutes = require('./Routes/SuperAdmin/StoreRouter');
@@ -73,6 +75,7 @@ const ProductRouter=require("./Routes/SuperAdmin/ProductRouter")
 const bannerRouter = require('./Routes/Admin/BannerRouter');
 const categoryRouter = require('./Routes/Admin/CategoryRouter');
 const productsRouter = require('./Routes/Admin/ProductsRoutes');
+const orderRouter = require('./Routes/Admin/OrderRouter');
 
 //Website Public imports
 const webRouter = require('./Routes/WebRouter/WebRouter');
@@ -83,6 +86,8 @@ app.use('/api/users', userRoutes);
 app.use('/api', authRouter);
 app.use('/api/cart', cartRouter);
 app.use('/api/payment', paymentRouter);
+app.use('/api/translation', translationRouter);
+app.use('/api/orderdispute', disputeRouter);
 
 // mount SuperAdmin Routes
 app.use('/api/superAdmin/stores', storeRoutes);
@@ -95,6 +100,7 @@ app.use('/api/superAdmin/products',ProductRouter);
 app.use('/api/banners', bannerRouter);
 app.use('/api/categories', categoryRouter);
 app.use('/api/products', productsRouter);
+app.use('/api/orders', orderRouter);
 
 // Mount Website (public) routes
 app.use('/api/web', webRouter);

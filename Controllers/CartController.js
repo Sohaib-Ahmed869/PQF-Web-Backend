@@ -320,15 +320,37 @@ module.exports = {
       const hours = parseInt(req.query.hours) || 24;
       const since = new Date(Date.now() - hours * 60 * 60 * 1000);
       
+      // First, automatically mark old active carts as abandoned
+      const updateResult = await Cart.updateMany(
+        { 
+          status: 'active', 
+          lastUpdated: { $lt: since },
+          'items.0': { $exists: true } // Only carts with items
+        },
+        { 
+          $set: { 
+            status: 'abandoned',
+            lastUpdated: new Date() // Update timestamp when marking as abandoned
+          } 
+        }
+      );
+      
+      console.log(`Marked ${updateResult.modifiedCount} carts as abandoned`);
+      
+      // Now fetch all abandoned carts (including newly marked ones)
       const carts = await Cart.find({ 
-        status: 'active', 
-        lastUpdated: { $lt: since },
+        status: 'abandoned',
         'items.0': { $exists: true } // Only carts with items
       })
       .populate('user', 'name email')
-      .populate('items.product', 'ItemName ItemCode');
+      .populate('items.product', 'ItemName ItemCode')
+      .sort({ lastUpdated: -1 }); // Most recent first
       
-      res.json({ success: true, data: carts });
+      res.json({ 
+        success: true, 
+        data: carts,
+        markedAsAbandoned: updateResult.modifiedCount
+      });
     } catch (err) {
       console.error('Error listing abandoned carts:', err);
       res.status(500).json({ success: false, error: err.message });

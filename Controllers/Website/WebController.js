@@ -2,6 +2,7 @@ const Banner = require('../../Models/Banner');
 const Category = require('../../Models/Category');
 const Store = require('../../Models/Store');
 const Product = require('../../Models/Product');
+const Cart = require('../../Models/Cart');
 
 // Utility function to shape product object for responses
 function shapeProduct(product) {
@@ -31,7 +32,7 @@ function shapeProduct(product) {
     validTo: product.ValidTo,
     validRemarks: product.ValidRemarks,
     warehouseInfo,
-    description: product.description // Added description field
+    description: product.Description // Fixed: use capital D to match model
   };
 }
 
@@ -82,7 +83,7 @@ const getActiveBannersByStore = async (req, res) => {
 };
 
 // 2. Get active categories for a selected store
-const getActiveCategoriesByStore = async (req, res) => {
+const getActiveCategoriesByStore = async (req, res) => {  
   try {
     const { storeId } = req.query;
     if (!storeId) {
@@ -285,6 +286,129 @@ const getProductById = async (req, res) => {
   }
 };
 
+// Get abandoned carts for a specific user
+const getUserAbandonedCarts = async (req, res) => {
+  try {
+    const userId = req.user._id; // Get user ID from authenticated request
+    
+    if (!userId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'User ID is required' 
+      });
+    }
+
+    // First, automatically mark old active carts as abandoned for this user
+    const hours = 24; // 24 hours threshold
+    const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+    
+    const updateResult = await Cart.updateMany(
+      { 
+        user: userId,
+        status: 'active', 
+        lastUpdated: { $lt: since },
+        'items.0': { $exists: true } // Only carts with items
+      },
+      { 
+        $set: { 
+          status: 'abandoned',
+          lastUpdated: new Date() // Update timestamp when marking as abandoned
+        } 
+      }
+    );
+    
+    console.log(`Marked ${updateResult.modifiedCount} carts as abandoned for user ${userId}`);
+
+    // Find abandoned carts for the specific user
+    const abandonedCarts = await Cart.find({
+      user: userId,
+      status: 'abandoned'
+    })
+    .populate('items.product', 'ItemName ItemCode image')
+    .populate('store', 'name')
+    .sort({ lastUpdated: -1 }); // Most recent first
+
+    // Transform the data to match frontend expectations
+    const transformedCarts = abandonedCarts.map(cart => ({
+      _id: cart._id,
+      user: {
+        _id: cart.user,
+        name: req.user.name || req.user.email,
+        email: req.user.email
+      },
+      items: cart.items.map(item => ({
+        product: {
+          _id: item.product._id,
+          ItemName: item.product.ItemName,
+          ItemCode: item.product.ItemCode,
+          image: item.product.image
+        },
+        quantity: item.quantity,
+        price: item.price
+      })),
+      total: cart.total,
+      itemCount: cart.itemCount,
+      status: cart.status,
+      store: cart.store,
+      createdAt: cart.createdAt,
+      updatedAt: cart.updatedAt,
+      lastUpdated: cart.lastUpdated,
+      expiresAt: cart.expiresAt
+    }));
+
+    return res.status(200).json({
+      success: true,
+      count: transformedCarts.length,
+      data: transformedCarts,
+      markedAsAbandoned: updateResult.modifiedCount
+    });
+
+  } catch (error) {
+    console.error('Error fetching user abandoned carts:', error);
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch abandoned carts',
+      error: error.message 
+    });
+  }
+};
+
+// Reorder from an abandoned cart: add all items to the user's active cart
+const reorderAbandonedCart = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { cartId } = req.params;
+    if (!userId || !cartId) {
+      return res.status(400).json({ success: false, message: 'User ID and cart ID are required' });
+    }
+    // Find the abandoned cart and verify ownership
+    const abandonedCart = await Cart.findOne({ _id: cartId, user: userId, status: 'abandoned' }).populate('items.product');
+    if (!abandonedCart) {
+      return res.status(404).json({ success: false, message: 'Abandoned cart not found' });
+    }
+    if (!abandonedCart.items || abandonedCart.items.length === 0) {
+      return res.status(400).json({ success: false, message: 'Abandoned cart is empty' });
+    }
+    // Change status to active and update lastUpdated
+    abandonedCart.status = 'active';
+    abandonedCart.lastUpdated = new Date();
+    await abandonedCart.save();
+    return res.status(200).json({
+      success: true,
+      message: 'Cart reactivated',
+      data: {
+        cartId: abandonedCart._id,
+        itemCount: abandonedCart.itemCount,
+        total: abandonedCart.total,
+        status: abandonedCart.status
+      }
+    });
+  } catch (error) {
+    console.error('Error reordering abandoned cart:', error);
+    return res.status(500).json({ success: false, message: 'Failed to reorder abandoned cart', error: error.message });
+  }
+};
+
 module.exports = {
   getActiveBannersByStore,
   getActiveCategoriesByStore,
@@ -292,7 +416,9 @@ module.exports = {
   getTop3ActiveProductsByStore,
   getActiveProductsByStore,
   getActiveProductsByStoreAndCategory,
-  suggestProductNames, // newly added
-  searchProducts, // newly added
-  getProductById // newly added
+  suggestProductNames,
+  searchProducts,
+  getProductById,
+  getUserAbandonedCarts,
+  reorderAbandonedCart
 };

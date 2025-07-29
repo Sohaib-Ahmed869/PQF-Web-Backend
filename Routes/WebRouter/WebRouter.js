@@ -5,6 +5,7 @@ const OrderController = require('../../Controllers/Website/OrderController');
 const { protect } = require('../../Middleware/Authentication');
 const { reorder } = require('../../Controllers/Website/OrderController');
 
+// Public routes
 router.get('/banners/active', WebController.getActiveBannersByStore);
 router.get('/categories/active', WebController.getActiveCategoriesByStore);
 router.get('/stores/active', WebController.getActiveStores);
@@ -21,5 +22,10 @@ router.get('/orders/:orderId/tracking', protect, OrderController.getOrderTrackin
 router.patch('/orders/:orderId/tracking', protect, OrderController.updateOrderTracking);
 router.post('/orders/:orderId/reorder', protect, reorder);
 router.get('/orders/:orderId/receipt', protect, OrderController.viewReceipt);
+
+// Get current user's abandoned carts
+router.get('/cart/abandoned/my', protect, WebController.getUserAbandonedCarts);
+router.post('/cart/abandoned/:cartId/reorder', protect, WebController.reorderAbandonedCart);
+
 
 module.exports = router;

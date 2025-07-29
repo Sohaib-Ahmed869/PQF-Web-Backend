@@ -2,6 +2,7 @@ const SalesOrder = require('../../Models/SalesOrder');
 const User = require('../../Models/User');
 const Cart = require('../../Models/Cart'); // Add this at the top
 const Payment = require('../../Models/Payment'); // Import Payment model
+const Dispute = require('../../Models/Dispute'); // Import Dispute model
 const mongoose = require('mongoose');
 
 // Get all orders for the currently authenticated user
@@ -9,8 +10,37 @@ const getUserOrders = async (req, res) => {
   try {
     const userId = req.user._id;
     const orders = await SalesOrder.find({ user: userId })
+      .populate('user', 'email')
       .sort({ createdAt: -1 });
-    const flattened = orders.map(flattenOrder);
+    
+    // Get dispute information for all orders
+    const orderIds = orders.map(order => order._id);
+    const disputes = await Dispute.find({ 
+      order: { $in: orderIds },
+      user: userId 
+    }).select('order disputeStatus disputeCategory createdAt');
+    
+    // Create a map of orderId to dispute info
+    const disputeMap = {};
+    disputes.forEach(dispute => {
+      disputeMap[dispute.order.toString()] = {
+        status: dispute.disputeStatus,
+        category: dispute.disputeCategory,
+        createdAt: dispute.createdAt
+      };
+    });
+    
+    const flattened = orders.map(order => {
+      const orderObj = flattenOrder(order);
+      // Add dispute information if it exists
+      if (disputeMap[order._id.toString()]) {
+        orderObj.dispute = disputeMap[order._id.toString()];
+      } else {
+        orderObj.dispute = { status: 'none' };
+      }
+      return orderObj;
+    });
+    
     return res.status(200).json({ success: true, count: flattened.length, data: flattened });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -38,6 +68,7 @@ function flattenOrder(order) {
     orderItems: order.orderItems,
     cardCode: order.CardCode,
     cardName: order.CardName,
+    email: order.user?.email || '', // Get email from populated user
     orderType: order.orderType,
     notes: order.notes,
     location,
@@ -47,7 +78,8 @@ function flattenOrder(order) {
     paymentType: order.paymentMethod,
     trackingNumber: order.trackingNumber,
     trackingStatus: order.trackingStatus,
-    trackingHistory: order.trackingHistory
+    trackingHistory: order.trackingHistory,
+    dispute: order.dispute || { status: 'none' },
   };
   if (order.shippingAddress) flattened.shippingAddress = order.shippingAddress;
   if (order.billingAddress) flattened.billingAddress = order.billingAddress;
@@ -84,6 +116,7 @@ async function flattenOrderWithPaymentIntent(order) {
     orderItems: order.orderItems,
     cardCode: order.CardCode,
     cardName: order.CardName,
+    email: order.email,
     orderType: order.orderType,
     notes: order.notes,
     location,
@@ -94,7 +127,9 @@ async function flattenOrderWithPaymentIntent(order) {
     trackingNumber: order.trackingNumber,
     trackingStatus: order.trackingStatus,
     trackingHistory: order.trackingHistory,
-    payment: paymentInfo // Add all payment fields here
+    payment: paymentInfo, // Add all payment fields here
+    dispute: order.dispute || { status: 'none' },
+    return: order.return || { status: 'none' }
   };
   if (order.shippingAddress) flattened.shippingAddress = order.shippingAddress;
   if (order.billingAddress) flattened.billingAddress = order.billingAddress;
@@ -259,11 +294,190 @@ const getOrderTracking = async (req, res) => {
   }
 };
 
+// Create dispute for customer
+const createOrderDispute = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { reason, description, customerNotes, email } = req.body;
+    const userId = req.user._id;
+
+    console.log('Create dispute request:', {
+      orderId,
+      userId: userId.toString(),
+      body: req.body
+    });
+
+    // Validate required fields
+    if (!reason || !description || !email) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Reason, description, and email are required' 
+      });
+    }
+
+    // Find the order and verify ownership
+    const order = await SalesOrder.findOne({ _id: orderId, user: userId });
+    if (!order) {
+      console.log('Order not found:', { orderId, userId: userId.toString() });
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    console.log('Order found:', { orderId: order._id.toString(), disputeStatus: order.dispute?.status });
+
+    // Check if dispute already exists
+    if (order.dispute && order.dispute.status !== 'none') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'A dispute already exists for this order' 
+      });
+    }
+
+    // Create dispute
+    order.dispute = {
+      status: 'pending',
+      reason,
+      description,
+      customerNotes,
+      email, // Include email in dispute data
+      createdAt: new Date(),
+      evidence: [],
+      resolution: '',
+      refundAmount: 0,
+      adminNotes: ''
+    };
+
+    await order.save();
+
+    console.log('Dispute created successfully');
+
+    return res.status(200).json({
+      success: true,
+      message: 'Dispute created successfully',
+      data: order.dispute
+    });
+  } catch (error) {
+    console.error('Create dispute error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Create return request for customer
+const createOrderReturn = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { reason, description, returnItems, customerNotes } = req.body;
+    const userId = req.user._id;
+
+    // Find the order and verify ownership
+    const order = await SalesOrder.findOne({ _id: orderId, user: userId });
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    // Check if return already exists
+    if (order.return && order.return.status !== 'none') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'A return request already exists for this order' 
+      });
+    }
+
+    // Create return request
+    order.return = {
+      status: 'requested',
+      reason,
+      description,
+      customerNotes,
+      requestedAt: new Date(),
+      returnItems: returnItems || [],
+      returnHistory: [{
+        status: 'requested',
+        timestamp: new Date(),
+        note: 'Return request created by customer',
+        updatedBy: req.user.name || req.user.email
+      }],
+      refundAmount: 0,
+      refundMethod: 'original_payment',
+      adminNotes: ''
+    };
+
+    await order.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Return request created successfully',
+      data: order.return
+    });
+  } catch (error) {
+    console.error('Create return error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Get customer's disputes
+const getCustomerDisputes = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { status } = req.query;
+
+    let filter = { user: userId, 'dispute.status': { $ne: 'none' } };
+    
+    if (status && status !== 'all') {
+      filter['dispute.status'] = status;
+    }
+
+    const orders = await SalesOrder.find(filter)
+      .select('DocNum DocTotal createdAt dispute')
+      .sort({ 'dispute.createdAt': -1 })
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      data: orders
+    });
+  } catch (error) {
+    console.error('Get customer disputes error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Get customer's returns
+const getCustomerReturns = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { status } = req.query;
+
+    let filter = { user: userId, 'return.status': { $ne: 'none' } };
+    
+    if (status && status !== 'all') {
+      filter['return.status'] = status;
+    }
+
+    const orders = await SalesOrder.find(filter)
+      .select('DocNum DocTotal createdAt return')
+      .sort({ 'return.requestedAt': -1 })
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      data: orders
+    });
+  } catch (error) {
+    console.error('Get customer returns error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getUserOrders,
+  getOrderDetails,
   updateOrderTracking,
   getOrderDetails,
   reorder,
   viewReceipt,
   getOrderTracking,
+  createOrderDispute,
+  createOrderReturn,
+  getCustomerDisputes,
+  getCustomerReturns,
 };

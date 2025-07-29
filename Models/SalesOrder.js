@@ -562,7 +562,7 @@ const OrderSchema = new Schema(
     payment_status: String,
 
     // Add payment reference
-    payment: { type: Schema.Types.ObjectId, ref: 'Payment' },
+    payment: { type: Schema.Types.ObjectId, ref: 'PQFPayment' },
     paymentMethod: { 
       type: String, 
       enum: ['card', 'cash', 'cheque', 'bank_transfer'], 
@@ -613,11 +613,15 @@ const OrderSchema = new Schema(
     trackingStatus: { type: String, enum: ['pending', 'shipped', 'in transit', 'delivered', 'cancelled'], default: 'pending' },
     trackingHistory: [
       {
-        status: { type: String },
+        status: { type: String, required: true },
         timestamp: { type: Date, default: Date.now },
-        note: { type: String }
+        note: { type: String, default: '' },
+        updatedBy: { type: String },
+        previousStatus: { type: String }
       }
     ],
+
+
   },
   {
     timestamps: true,
