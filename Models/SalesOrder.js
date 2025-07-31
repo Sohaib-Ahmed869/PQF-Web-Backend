@@ -543,7 +543,7 @@ const OrderSchema = new Schema(
     SAPDocEntry: Number,
     LocalStatus: {
       type: String,
-      enum: ["Created", "Synced", "SyncFailed"],
+      enum: ["Created", "Synced", "SyncFailed", "Confirmed", "PaymentFailed", "Canceled", "Refunded"],
       default: "Created",
     },
     SyncErrors: String,
@@ -621,6 +621,72 @@ const OrderSchema = new Schema(
       }
     ],
 
+    // Recurring Order Fields
+    isRecurring: {
+      type: Boolean,
+      default: false
+    },
+    // For recurring orders: points to the parent recurring order
+    // For generated orders: points to the recurring order that generated this order
+    parentRecurringOrder: {
+      type: Schema.Types.ObjectId,
+      ref: 'SalesOrder',
+      default: null
+    },
+    // Frequency settings (only for recurring orders)
+    recurringFrequency: {
+      type: String,
+      enum: ['weekly', 'biweekly', 'monthly', 'quarterly'],
+      default: null
+    },
+    recurringInterval: {
+      type: Number,
+      default: 1
+    },
+    // Next order date (only for recurring orders)
+    nextRecurringDate: {
+      type: Date,
+      default: null
+    },
+    // End date for recurring orders (null = no end date)
+    recurringEndDate: {
+      type: Date,
+      default: null
+    },
+    // Total cycles (null = unlimited)
+    totalRecurringCycles: {
+      type: Number,
+      default: null
+    },
+    completedRecurringCycles: {
+      type: Number,
+      default: 0
+    },
+    // Status for recurring orders
+    recurringStatus: {
+      type: String,
+      enum: ['active', 'paused', 'cancelled', 'completed'],
+      default: null
+    },
+    // Stripe subscription details (only for recurring orders)
+    stripeSubscriptionId: {
+      type: String,
+      default: null
+    },
+    stripeCustomerId: {
+      type: String,
+      default: null
+    },
+    stripePaymentMethodId: {
+      type: String,
+      default: null
+    },
+    // Flag to identify orders generated from recurring orders
+    generatedFromRecurring: {
+      type: Boolean,
+      default: false
+    },
+
 
   },
   {
@@ -633,5 +699,12 @@ OrderSchema.index({ DocEntry: 1 });
 OrderSchema.index({ CardCode: 1 });
 OrderSchema.index({ DocDate: 1 });
 OrderSchema.index({ DocumentStatus: 1 });
+// Recurring order indexes
+OrderSchema.index({ isRecurring: 1 });
+OrderSchema.index({ recurringStatus: 1 });
+OrderSchema.index({ nextRecurringDate: 1 });
+OrderSchema.index({ stripeSubscriptionId: 1 });
+OrderSchema.index({ parentRecurringOrder: 1 });
+OrderSchema.index({ generatedFromRecurring: 1 });
 const SalesOrder = mongoose.model("SalesOrder", OrderSchema);
 module.exports = SalesOrder;

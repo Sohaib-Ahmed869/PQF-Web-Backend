@@ -119,6 +119,28 @@ const userSchema = new Schema({
     type: Schema.Types.ObjectId,
     ref: 'Customer',
   },
+  // Document uploads for registration
+  documents: {
+    tradeLicense: {
+      url: String,
+      filename: String,
+      uploadedAt: Date,
+      verified: { type: Boolean, default: false }
+    },
+    idDocument: {
+      url: String,
+      filename: String,
+      uploadedAt: Date,
+      verified: { type: Boolean, default: false }
+    }
+  },
+  // Document verification status
+  documentVerificationStatus: {
+    type: String,
+    enum: ['pending', 'verified', 'rejected'],
+    default: 'pending'
+  },
+  documentVerificationNotes: String,
 }, {
   timestamps: true
 });

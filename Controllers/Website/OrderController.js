@@ -11,6 +11,7 @@ const getUserOrders = async (req, res) => {
     const userId = req.user._id;
     const orders = await SalesOrder.find({ user: userId })
       .populate('user', 'email')
+      .populate('parentRecurringOrder', 'DocNum DocTotal createdAt recurringFrequency recurringStatus')
       .sort({ createdAt: -1 });
     
     // Get dispute information for all orders
@@ -63,6 +64,35 @@ function flattenOrder(order) {
       address: [addr.address, addr.city, addr.country].filter(Boolean).join(', ')
     };
   }
+  
+  // Prepare recurring order information
+  let recurringInfo = null;
+  if (order.isRecurring) {
+    recurringInfo = {
+      isRecurring: true,
+      frequency: order.recurringFrequency,
+      interval: order.recurringInterval,
+      status: order.recurringStatus,
+      nextOrderDate: order.nextRecurringDate,
+      endDate: order.recurringEndDate,
+      totalCycles: order.totalRecurringCycles,
+      completedCycles: order.completedRecurringCycles,
+      stripeSubscriptionId: order.stripeSubscriptionId
+    };
+  } else if (order.generatedFromRecurring && order.parentRecurringOrder) {
+    recurringInfo = {
+      isRecurring: false,
+      generatedFromRecurring: true,
+      parentRecurringOrder: {
+        orderId: order.parentRecurringOrder._id,
+        orderNumber: order.parentRecurringOrder.DocNum,
+        frequency: order.parentRecurringOrder.recurringFrequency,
+        status: order.parentRecurringOrder.recurringStatus,
+        createdAt: order.parentRecurringOrder.createdAt
+      }
+    };
+  }
+  
   const flattened = {
     orderId: order._id,
     orderItems: order.orderItems,
@@ -80,6 +110,7 @@ function flattenOrder(order) {
     trackingStatus: order.trackingStatus,
     trackingHistory: order.trackingHistory,
     dispute: order.dispute || { status: 'none' },
+    recurring: recurringInfo
   };
   if (order.shippingAddress) flattened.shippingAddress = order.shippingAddress;
   if (order.billingAddress) flattened.billingAddress = order.billingAddress;
@@ -111,6 +142,34 @@ async function flattenOrderWithPaymentIntent(order) {
     paymentInfo = rest;
   }
 
+  // Prepare recurring order information
+  let recurringInfo = null;
+  if (order.isRecurring) {
+    recurringInfo = {
+      isRecurring: true,
+      frequency: order.recurringFrequency,
+      interval: order.recurringInterval,
+      status: order.recurringStatus,
+      nextOrderDate: order.nextRecurringDate,
+      endDate: order.recurringEndDate,
+      totalCycles: order.totalRecurringCycles,
+      completedCycles: order.completedRecurringCycles,
+      stripeSubscriptionId: order.stripeSubscriptionId
+    };
+  } else if (order.generatedFromRecurring && order.parentRecurringOrder) {
+    recurringInfo = {
+      isRecurring: false,
+      generatedFromRecurring: true,
+      parentRecurringOrder: {
+        orderId: order.parentRecurringOrder._id,
+        orderNumber: order.parentRecurringOrder.DocNum,
+        frequency: order.parentRecurringOrder.recurringFrequency,
+        status: order.parentRecurringOrder.recurringStatus,
+        createdAt: order.parentRecurringOrder.createdAt
+      }
+    };
+  }
+
   const flattened = {
     orderId: order._id,
     orderItems: order.orderItems,
@@ -129,7 +188,8 @@ async function flattenOrderWithPaymentIntent(order) {
     trackingHistory: order.trackingHistory,
     payment: paymentInfo, // Add all payment fields here
     dispute: order.dispute || { status: 'none' },
-    return: order.return || { status: 'none' }
+    return: order.return || { status: 'none' },
+    recurring: recurringInfo
   };
   if (order.shippingAddress) flattened.shippingAddress = order.shippingAddress;
   if (order.billingAddress) flattened.billingAddress = order.billingAddress;
@@ -141,7 +201,8 @@ const getOrderDetails = async (req, res) => {
   try {
     const userId = req.user._id;
     const { orderId } = req.params;
-    const order = await SalesOrder.findOne({ _id: orderId, user: userId });
+    const order = await SalesOrder.findOne({ _id: orderId, user: userId })
+      .populate('parentRecurringOrder', 'DocNum DocTotal createdAt recurringFrequency recurringStatus');
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
@@ -252,7 +313,8 @@ const viewReceipt = async (req, res) => {
   try {
     const userId = req.user._id;
     const { orderId } = req.params;
-    const order = await SalesOrder.findOne({ _id: orderId, user: userId });
+    const order = await SalesOrder.findOne({ _id: orderId, user: userId })
+      .populate('parentRecurringOrder', 'DocNum DocTotal createdAt recurringFrequency recurringStatus');
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
@@ -294,176 +356,60 @@ const getOrderTracking = async (req, res) => {
   }
 };
 
-// Create dispute for customer
-const createOrderDispute = async (req, res) => {
-  try {
-    const { orderId } = req.params;
-    const { reason, description, customerNotes, email } = req.body;
-    const userId = req.user._id;
-
-    console.log('Create dispute request:', {
-      orderId,
-      userId: userId.toString(),
-      body: req.body
-    });
-
-    // Validate required fields
-    if (!reason || !description || !email) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Reason, description, and email are required' 
-      });
-    }
-
-    // Find the order and verify ownership
-    const order = await SalesOrder.findOne({ _id: orderId, user: userId });
-    if (!order) {
-      console.log('Order not found:', { orderId, userId: userId.toString() });
-      return res.status(404).json({ success: false, message: 'Order not found' });
-    }
-
-    console.log('Order found:', { orderId: order._id.toString(), disputeStatus: order.dispute?.status });
-
-    // Check if dispute already exists
-    if (order.dispute && order.dispute.status !== 'none') {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'A dispute already exists for this order' 
-      });
-    }
-
-    // Create dispute
-    order.dispute = {
-      status: 'pending',
-      reason,
-      description,
-      customerNotes,
-      email, // Include email in dispute data
-      createdAt: new Date(),
-      evidence: [],
-      resolution: '',
-      refundAmount: 0,
-      adminNotes: ''
-    };
-
-    await order.save();
-
-    console.log('Dispute created successfully');
-
-    return res.status(200).json({
-      success: true,
-      message: 'Dispute created successfully',
-      data: order.dispute
-    });
-  } catch (error) {
-    console.error('Create dispute error:', error);
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-// Create return request for customer
-const createOrderReturn = async (req, res) => {
-  try {
-    const { orderId } = req.params;
-    const { reason, description, returnItems, customerNotes } = req.body;
-    const userId = req.user._id;
-
-    // Find the order and verify ownership
-    const order = await SalesOrder.findOne({ _id: orderId, user: userId });
-    if (!order) {
-      return res.status(404).json({ success: false, message: 'Order not found' });
-    }
-
-    // Check if return already exists
-    if (order.return && order.return.status !== 'none') {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'A return request already exists for this order' 
-      });
-    }
-
-    // Create return request
-    order.return = {
-      status: 'requested',
-      reason,
-      description,
-      customerNotes,
-      requestedAt: new Date(),
-      returnItems: returnItems || [],
-      returnHistory: [{
-        status: 'requested',
-        timestamp: new Date(),
-        note: 'Return request created by customer',
-        updatedBy: req.user.name || req.user.email
-      }],
-      refundAmount: 0,
-      refundMethod: 'original_payment',
-      adminNotes: ''
-    };
-
-    await order.save();
-
-    return res.status(200).json({
-      success: true,
-      message: 'Return request created successfully',
-      data: order.return
-    });
-  } catch (error) {
-    console.error('Create return error:', error);
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-// Get customer's disputes
-const getCustomerDisputes = async (req, res) => {
+// Get customer's recurring orders
+const getCustomerRecurringOrders = async (req, res) => {
   try {
     const userId = req.user._id;
     const { status } = req.query;
 
-    let filter = { user: userId, 'dispute.status': { $ne: 'none' } };
+    let filter = { user: userId, isRecurring: true };
     
     if (status && status !== 'all') {
-      filter['dispute.status'] = status;
+      filter.recurringStatus = status;
     }
 
-    const orders = await SalesOrder.find(filter)
-      .select('DocNum DocTotal createdAt dispute')
-      .sort({ 'dispute.createdAt': -1 })
-      .lean();
+    const recurringOrders = await SalesOrder.find(filter)
+      .populate('user', 'email')
+      .populate('parentRecurringOrder', 'DocNum DocTotal createdAt recurringFrequency recurringStatus')
+      .sort({ createdAt: -1 });
+
+    // Get generated orders for each recurring order
+    const recurringOrderIds = recurringOrders.map(order => order._id);
+    const generatedOrders = await SalesOrder.find({ 
+      user: userId, 
+      parentRecurringOrder: { $in: recurringOrderIds },
+      generatedFromRecurring: true 
+    })
+    .populate('user', 'email')
+    .populate('parentRecurringOrder', 'DocNum DocTotal createdAt recurringFrequency recurringStatus')
+    .sort({ createdAt: -1 });
+
+    // Group generated orders by parent recurring order
+    const generatedOrdersMap = {};
+    generatedOrders.forEach(order => {
+      const parentId = order.parentRecurringOrder.toString();
+      if (!generatedOrdersMap[parentId]) {
+        generatedOrdersMap[parentId] = [];
+      }
+      generatedOrdersMap[parentId].push(order);
+    });
+
+    // Flatten recurring orders with the same structure as regular orders
+    const flattenedRecurringOrders = recurringOrders.map(order => {
+      const orderObj = flattenOrder(order);
+      orderObj.generatedOrders = (generatedOrdersMap[order._id.toString()] || []).map(generatedOrder => {
+        return flattenOrder(generatedOrder);
+      });
+      return orderObj;
+    });
 
     return res.status(200).json({
       success: true,
-      data: orders
+      count: flattenedRecurringOrders.length,
+      data: flattenedRecurringOrders
     });
   } catch (error) {
-    console.error('Get customer disputes error:', error);
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-// Get customer's returns
-const getCustomerReturns = async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const { status } = req.query;
-
-    let filter = { user: userId, 'return.status': { $ne: 'none' } };
-    
-    if (status && status !== 'all') {
-      filter['return.status'] = status;
-    }
-
-    const orders = await SalesOrder.find(filter)
-      .select('DocNum DocTotal createdAt return')
-      .sort({ 'return.requestedAt': -1 })
-      .lean();
-
-    return res.status(200).json({
-      success: true,
-      data: orders
-    });
-  } catch (error) {
-    console.error('Get customer returns error:', error);
+    console.error('Get customer recurring orders error:', error);
     return res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -476,8 +422,5 @@ module.exports = {
   reorder,
   viewReceipt,
   getOrderTracking,
-  createOrderDispute,
-  createOrderReturn,
-  getCustomerDisputes,
-  getCustomerReturns,
+  getCustomerRecurringOrders,
 };

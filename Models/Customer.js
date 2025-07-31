@@ -40,6 +40,7 @@ const CustomerSchema = new Schema({
     type: String,
     trim: true,
   },
+
   // Assigned sales agent
   assignedTo: {
     type: Schema.Types.ObjectId,
@@ -108,6 +109,25 @@ const CustomerSchema = new Schema({
       type: String,
       trim: true,
       default: "France", // Default value since your examples seem to be in France
+    },
+  },
+  billingAddress: {
+    street: {
+      type: String,
+      trim: true,
+    },
+    zipCode: {
+      type: String,
+      trim: true,
+    },
+    city: {
+      type: String,
+      trim: true,
+    },
+    country: {
+      type: String,
+      trim: true,
+      default: "France",
     },
   },
   outstandingBalance: {

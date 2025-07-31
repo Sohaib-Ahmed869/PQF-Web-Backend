@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
 const {
   getAllUsers,
   getUserById,
@@ -21,11 +22,31 @@ const {
   addToWishlist,
   removeFromWishlist,
   getWishlist,
+  updateDocumentVerification,
 } = require('../Controllers/UserController');
-const { protect, requireSuperAdmin } = require("../Middleware/Authentication");
+const { protect, requireSuperAdmin, requireAdmin } = require("../Middleware/Authentication");
+const { documentUpload } = require('../Config/S3');
+
+// Error handling middleware for multer
+const handleMulterError = (error, req, res, next) => {
+  if (error instanceof multer.MulterError) {
+    console.error('Multer error:', error);
+    return res.status(400).json({
+      success: false,
+      message: 'File upload error: ' + error.message
+    });
+  } else if (error) {
+    console.error('Upload error:', error);
+    return res.status(400).json({
+      success: false,
+      message: 'File upload error: ' + error.message
+    });
+  }
+  next();
+};
 
 // PUBLIC ROUTES (No authentication required)
-router.post('/register',register);
+router.post('/register', documentUpload, handleMulterError, register);
 router.post('/login', login);
 
 // AUTHENTICATED USER ROUTES (All authenticated users)
@@ -51,10 +72,11 @@ router.get('/wishlist', protect, getWishlist);
 // SUPER ADMIN ONLY ROUTES
 
 router.post('/create-admin', protect, requireSuperAdmin, register);
-router.get('/getAllUsers', protect, requireSuperAdmin, getAllUsers);
-router.get('/getIndividual/:id', protect, requireSuperAdmin, getUserById);
-router.put('/:id/status', protect, requireSuperAdmin, updateUserStatus);
-router.delete('/delete/:id', protect, requireSuperAdmin, deleteUser);
-router.get('/getAdmins', protect, requireSuperAdmin, getAdmins);
+router.get('/getAllUsers', protect, requireAdmin, getAllUsers);
+router.get('/getIndividual/:id', protect, requireAdmin, getUserById);
+router.put('/:id/status', protect, requireAdmin, updateUserStatus);
+router.delete('/delete/:id', protect, requireAdmin, deleteUser);
+router.get('/getAdmins', protect, requireAdmin, getAdmins);
+router.put('/:userId/document-verification', protect, requireAdmin, updateDocumentVerification);
 
 module.exports = router;

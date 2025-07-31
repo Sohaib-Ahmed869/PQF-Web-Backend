@@ -23,6 +23,9 @@ router.patch('/orders/:orderId/tracking', protect, OrderController.updateOrderTr
 router.post('/orders/:orderId/reorder', protect, reorder);
 router.get('/orders/:orderId/receipt', protect, OrderController.viewReceipt);
 
+// Get current user's recurring orders
+router.get('/orders/recurring/my', protect, OrderController.getCustomerRecurringOrders);
+
 // Get current user's abandoned carts
 router.get('/cart/abandoned/my', protect, WebController.getUserAbandonedCarts);
 router.post('/cart/abandoned/:cartId/reorder', protect, WebController.reorderAbandonedCart);

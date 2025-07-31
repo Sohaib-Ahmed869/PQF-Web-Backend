@@ -110,6 +110,40 @@ const register = async (req, res) => {
       }
     }
 
+    // Handle document uploads for customer registration
+    let documents = {};
+    let documentVerificationStatus = 'pending';
+    
+    console.log('Registration - req.files:', req.files);
+    console.log('Registration - isCustomerRegistration:', isCustomerRegistration);
+    
+    if (isCustomerRegistration && req.files) {
+      if (req.files.tradeLicense && req.files.tradeLicense[0]) {
+        console.log('Processing trade license:', req.files.tradeLicense[0]);
+        documents.tradeLicense = {
+          url: req.files.tradeLicense[0].location,
+          filename: req.files.tradeLicense[0].originalname,
+          uploadedAt: new Date(),
+          verified: false
+        };
+      }
+      
+      if (req.files.idDocument && req.files.idDocument[0]) {
+        console.log('Processing ID document:', req.files.idDocument[0]);
+        documents.idDocument = {
+          url: req.files.idDocument[0].location,
+          filename: req.files.idDocument[0].originalname,
+          uploadedAt: new Date(),
+          verified: false
+        };
+      }
+      
+      // Set document verification status
+      if (Object.keys(documents).length > 0) {
+        documentVerificationStatus = 'pending';
+      }
+    }
+
     // Create user
     const userData = {
       name,
@@ -141,6 +175,13 @@ const register = async (req, res) => {
       userData.createdBy = req.user._id;
     }
 
+    // Add documents and verification status for customer registration
+    if (isCustomerRegistration && Object.keys(documents).length > 0) {
+      userData.documents = documents;
+      userData.documentVerificationStatus = documentVerificationStatus;
+    }
+
+    console.log('Final userData for creation:', userData);
     const user = await User.create(userData);
 
     // Update store with admin reference
@@ -187,6 +228,56 @@ const register = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error during registration',
+      error: error.message
+    });
+  }
+};
+
+// Update document verification status (for admin use)
+const updateDocumentVerification = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { status, notes } = req.body;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    user.documentVerificationStatus = status;
+    if (notes) {
+      user.documentVerificationNotes = notes;
+    }
+
+    // Update verification status for individual documents
+    if (status === 'verified') {
+      if (user.documents.tradeLicense) {
+        user.documents.tradeLicense.verified = true;
+      }
+      if (user.documents.idDocument) {
+        user.documents.idDocument.verified = true;
+      }
+    }
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Document verification status updated successfully',
+      data: {
+        documentVerificationStatus: user.documentVerificationStatus,
+        documentVerificationNotes: user.documentVerificationNotes
+      }
+    });
+
+  } catch (error) {
+    console.error('Document verification update error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error during document verification update',
       error: error.message
     });
   }
@@ -1009,5 +1100,6 @@ module.exports = {
   getUserAddress,
   addToWishlist,
   removeFromWishlist,
-  getWishlist
+  getWishlist,
+  updateDocumentVerification
 };

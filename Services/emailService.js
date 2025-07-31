@@ -130,7 +130,7 @@ const sendOrderConfirmationEmail = async (email, orderData, customerName) => {
                 <div class="item">
                   <span>Payment Status:</span>
                   <span class="status ${orderData.paymentStatus === 'paid' ? 'delivered' : 'pending'}">
-                    ${orderData.paymentStatus === 'paid' ? 'Paid' : 'Pending'}
+${orderData.paymentStatus === 'paid' ? 'Paid' : 'Pending'}
                   </span>
                 </div>
                 <div class="item">
