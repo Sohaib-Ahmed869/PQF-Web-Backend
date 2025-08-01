@@ -130,7 +130,36 @@ const getActiveStores = async (req, res) => {
   }
 };
 
-// 4. Get top 3 active products for a selected store
+// 4. Get top 12 featured products with highest stock for a selected store
+const getFeaturedProducts = async (req, res) => {
+  try {
+    const { storeId } = req.query;
+    if (!storeId) {
+      return res.status(400).json({ success: false, message: 'storeId is required' });
+    }
+    
+    // Get products that are in stock, available, and sort by stock quantity (highest first)
+    const products = await Product.find({ 
+      store: storeId, 
+      Valid: 'tYES',
+      QuantityOnStock: { $gt: 0 } 
+    })
+      .sort({ QuantityOnStock: -1 }) // Sort by stock quantity descending
+      .limit(12)
+      .lean();
+      
+    const shapedProducts = products.map(shapeProduct);
+    return res.status(200).json({
+      success: true,
+      count: shapedProducts.length,
+      data: shapedProducts
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Get top 3 active products for a selected store (keeping for backward compatibility)
 const getTop3ActiveProductsByStore = async (req, res) => {
   try {
     const { storeId } = req.query;
@@ -139,7 +168,7 @@ const getTop3ActiveProductsByStore = async (req, res) => {
     }
     const products = await Product.find({ store: storeId, QuantityOnStock: { $gt: 0 } })
       .sort({ createdAt: -1 })
-      .limit(3)
+      .limit(12)
       .lean();
     const shapedProducts = products.map(shapeProduct);
     return res.status(200).json({
@@ -413,6 +442,7 @@ module.exports = {
   getActiveBannersByStore,
   getActiveCategoriesByStore,
   getActiveStores,
+  getFeaturedProducts,
   getTop3ActiveProductsByStore,
   getActiveProductsByStore,
   getActiveProductsByStoreAndCategory,

@@ -9,7 +9,7 @@ const { reorder } = require('../../Controllers/Website/OrderController');
 router.get('/banners/active', WebController.getActiveBannersByStore);
 router.get('/categories/active', WebController.getActiveCategoriesByStore);
 router.get('/stores/active', WebController.getActiveStores);
-router.get('/products/active/top3', WebController.getTop3ActiveProductsByStore);
+router.get('/products/active/top3', WebController.getFeaturedProducts);
 router.get('/products/active', WebController.getActiveProductsByStore);
 router.get('/products/active/by-store-category', WebController.getActiveProductsByStoreAndCategory);
 router.get('/products/suggest-names', WebController.suggestProductNames);
