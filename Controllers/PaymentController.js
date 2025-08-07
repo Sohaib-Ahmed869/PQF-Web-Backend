@@ -4,6 +4,8 @@ const Payment = require('../Models/Payment');
 const Cart = require('../Models/Cart');
 const User = require('../Models/User');
 const { sendOrderConfirmationEmail } = require('../Services/emailService');
+const AppliedPromotion = require('../Models/AppliedPromotion');
+const Promotion = require('../Models/Promotion');
 
 // Function to generate tracking number
 const generateTrackingNumber = () => {
@@ -118,6 +120,29 @@ async function createRecurringOrder(parentOrder, invoice = null) {
       Address2: parentOrder.Address2,
       Comments: parentOrder.Comments,
       DocTotal: parentOrder.DocTotal,
+      originalTotal: parentOrder.originalTotal || parentOrder.DocTotal,
+      totalDiscount: parentOrder.totalDiscount || 0,
+      finalTotal: parentOrder.finalTotal || parentOrder.DocTotal,
+      appliedPromotions: (() => {
+        try {
+          if (Array.isArray(parentOrder.appliedPromotions)) return parentOrder.appliedPromotions;
+          if (typeof parentOrder.appliedPromotions === 'string') return JSON.parse(parentOrder.appliedPromotions);
+          return parentOrder.appliedPromotions || [];
+        } catch (e) {
+          console.error('Error parsing parent order appliedPromotions:', e);
+          return [];
+        }
+      })(),
+      appliedDiscounts: (() => {
+        try {
+          if (Array.isArray(parentOrder.appliedDiscounts)) return parentOrder.appliedDiscounts;
+          if (typeof parentOrder.appliedDiscounts === 'string') return JSON.parse(parentOrder.appliedDiscounts);
+          return parentOrder.appliedDiscounts || [];
+        } catch (e) {
+          console.error('Error parsing parent order appliedDiscounts:', e);
+          return [];
+        }
+      })(),
       orderItems: parentOrder.orderItems,
       shippingAddress: parentOrder.shippingAddress,
       billingAddress: parentOrder.billingAddress,
@@ -159,6 +184,79 @@ async function createRecurringOrder(parentOrder, invoice = null) {
 
     await newOrder.save();
     console.log('New recurring order created:', newOrder._id, 'Tracking:', trackingNumber);
+
+    // Handle promotion usage tracking for the recurring order
+    try {
+      // Get the user's cart to check for applied promotions
+      const cart = await Cart.findOne({ 
+        user: parentOrder.user, 
+        status: 'active',
+        store: newOrder.store 
+      }).populate('appliedPromotions.promotion');
+      
+      if (cart && cart.appliedPromotions && cart.appliedPromotions.length > 0) {
+        console.log('Processing applied promotions for recurring order:', newOrder._id);
+        
+        for (const appliedPromotion of cart.appliedPromotions) {
+          try {
+            // Update the promotion usageHistory with the order reference
+            const promotion = await Promotion.findById(appliedPromotion.promotion);
+            if (promotion) {
+              // Find the usage entry that doesn't have an order reference yet
+              const usageEntry = promotion.usageHistory.find(
+                usage => usage.user && usage.user.toString() === parentOrder.user.toString() && !usage.order
+              );
+              
+              if (usageEntry) {
+                usageEntry.order = newOrder._id;
+                await promotion.save();
+                console.log('Updated promotion usageHistory with recurring order reference:', {
+                  promotionId: promotion._id,
+                  orderId: newOrder._id
+                });
+              }
+            }
+            
+            // Create AppliedPromotion record
+            const appliedPromotionRecord = new AppliedPromotion({
+              promotion: appliedPromotion.promotion,
+              order: newOrder._id,
+              user: parentOrder.user,
+              store: newOrder.store,
+              code: appliedPromotion.code,
+              type: promotion?.type || 'unknown',
+              appliedDiscounts: [], // This would need to be populated based on the actual discounts applied
+              totalDiscountAmount: appliedPromotion.discountAmount || 0,
+              originalCartTotal: newOrder.DocTotal || 0,
+              finalCartTotal: (newOrder.DocTotal || 0) - (appliedPromotion.discountAmount || 0),
+              status: 'applied'
+            });
+            
+            await appliedPromotionRecord.save();
+            console.log('Created AppliedPromotion record for recurring order:', {
+              appliedPromotionId: appliedPromotionRecord._id,
+              promotionId: appliedPromotion.promotion,
+              orderId: newOrder._id
+            });
+            
+          } catch (promotionError) {
+            console.error('Error processing applied promotion for recurring order:', promotionError);
+            // Don't fail the order creation if promotion tracking fails
+          }
+        }
+        
+        // Clear applied promotions from cart after order creation
+        cart.appliedPromotions = [];
+        await cart.save();
+        console.log('Cleared applied promotions from cart after recurring order creation');
+        
+      } else {
+        console.log('No applied promotions found for recurring order:', newOrder._id);
+      }
+    } catch (promotionTrackingError) {
+      console.error('Error handling promotion usage tracking for recurring order:', promotionTrackingError);
+      // Don't fail the order creation if promotion tracking fails
+    }
 
     // Create payment record for the new order
     if (invoice) {
@@ -1759,6 +1857,47 @@ exports.createOrderAfterPayment = async (req, res) => {
       ItemCode: item.product || '',
     }));
 
+    // Debug: Log the orderItems data to ensure free item fields are present
+    console.log('OrderItems data being saved:', JSON.stringify(orderData.orderItems, null, 2));
+
+    // Validate and process orderItems to ensure free item fields are properly set
+    const processedOrderItems = orderData.orderItems.map(item => {
+      // Ensure all required fields are present
+      const processedItem = {
+        name: item.name || 'Unknown Item',
+        price: Number(item.price || 0),
+        quantity: Number(item.quantity || 1),
+        product: item.product || '',
+        image: item.image || '',
+        // Ensure free item fields are properly set with correct types
+        isFreeItem: Boolean(item.isFreeItem || false),
+        freeQuantity: Number(item.freeQuantity || 0),
+        regularQuantity: Number(item.regularQuantity || Math.max(0, (item.quantity || 1) - (item.freeQuantity || 0))),
+        discountAmount: Number(item.discountAmount || 0)
+      };
+      
+      // Log any items with free item data
+      if (processedItem.isFreeItem || processedItem.freeQuantity > 0) {
+        console.log('🆓 Processing free item:', {
+          name: processedItem.name,
+          isFreeItem: processedItem.isFreeItem,
+          freeQuantity: processedItem.freeQuantity,
+          regularQuantity: processedItem.regularQuantity,
+          discountAmount: processedItem.discountAmount
+        });
+      }
+      
+      return processedItem;
+    });
+
+    console.log('Processed orderItems with free item fields:', JSON.stringify(processedOrderItems, null, 2));
+    
+    // Final validation: Ensure all free item fields are properly set
+    const freeItemsCount = processedOrderItems.filter(item => item.isFreeItem || item.freeQuantity > 0).length;
+    if (freeItemsCount > 0) {
+      console.log(`🎯 Found ${freeItemsCount} items with free item data to be saved`);
+    }
+
     // Determine payment and order status based on SalesOrder enum values
     let paymentStatus, localStatus;
     switch (orderData.paymentMethod) {
@@ -1816,6 +1955,10 @@ exports.createOrderAfterPayment = async (req, res) => {
     const trackingNumber = generateTrackingNumber();
     console.log('Generated tracking number:', trackingNumber);
 
+    // Debug: Log promotion data being processed
+    console.log('Order creation debug - appliedPromotions:', typeof orderData.appliedPromotions, orderData.appliedPromotions);
+    console.log('Order creation debug - appliedDiscounts:', typeof orderData.appliedDiscounts, orderData.appliedDiscounts);
+
     // Create the sales order
     const order = new SalesOrder({
       DocEntry: Date.now(), // Temporary ID until SAP sync
@@ -1830,7 +1973,30 @@ exports.createOrderAfterPayment = async (req, res) => {
       Address2: orderData.billingAddress?.address || '',
       Comments: orderData.notes || '',
       DocTotal: orderData.totalPrice || 0,
-      orderItems: orderData.orderItems,
+      originalTotal: orderData.originalTotal || orderData.totalPrice || 0,
+      totalDiscount: orderData.totalDiscount || 0,
+      finalTotal: orderData.finalTotal || orderData.totalPrice || 0,
+      appliedPromotions: (() => {
+        try {
+          if (Array.isArray(orderData.appliedPromotions)) return orderData.appliedPromotions;
+          if (typeof orderData.appliedPromotions === 'string') return JSON.parse(orderData.appliedPromotions);
+          return orderData.appliedPromotions || [];
+        } catch (e) {
+          console.error('Error parsing appliedPromotions:', e);
+          return [];
+        }
+      })(),
+      appliedDiscounts: (() => {
+        try {
+          if (Array.isArray(orderData.appliedDiscounts)) return orderData.appliedDiscounts;
+          if (typeof orderData.appliedDiscounts === 'string') return JSON.parse(orderData.appliedDiscounts);
+          return orderData.appliedDiscounts || [];
+        } catch (e) {
+          console.error('Error parsing appliedDiscounts:', e);
+          return [];
+        }
+      })(),
+      orderItems: processedOrderItems,
       shippingAddress: orderData.shippingAddress,
       billingAddress: orderData.billingAddress,
       notes: orderData.notes,
@@ -1875,6 +2041,106 @@ exports.createOrderAfterPayment = async (req, res) => {
 
     await order.save();
     console.log('Order created:', order._id, 'Tracking:', trackingNumber);
+    
+    // Debug: Verify that free item fields were saved correctly
+    console.log('Saved order orderItems:', JSON.stringify(order.orderItems, null, 2));
+    
+    // Verify free item fields are present
+    const hasFreeItems = order.orderItems.some(item => item.isFreeItem || item.freeQuantity > 0);
+    if (hasFreeItems) {
+      console.log('✅ Free items detected and saved in order:', order._id);
+      order.orderItems.forEach((item, index) => {
+        if (item.isFreeItem || item.freeQuantity > 0) {
+          console.log(`  Item ${index + 1}: ${item.name} - isFreeItem: ${item.isFreeItem}, freeQuantity: ${item.freeQuantity}, regularQuantity: ${item.regularQuantity}`);
+        }
+      });
+    } else {
+      console.log('ℹ️ No free items found in order:', order._id);
+    }
+    
+    // Additional validation: Check if the order was saved with all fields
+    const savedOrder = await SalesOrder.findById(order._id).lean();
+    if (savedOrder && savedOrder.orderItems) {
+      const savedFreeItems = savedOrder.orderItems.filter(item => item.isFreeItem || item.freeQuantity > 0);
+      if (savedFreeItems.length > 0) {
+        console.log('✅ Verified: Free items successfully saved to database:', savedFreeItems.length, 'items');
+      } else {
+        console.log('⚠️ Warning: No free items found in saved order - this might indicate a data loss issue');
+      }
+    }
+
+    // Handle promotion usage tracking for the order
+    try {
+
+      const cart = await Cart.findOne({ 
+        user: userId, 
+        status: 'active',
+        store: order.store 
+      }).populate('appliedPromotions.promotion');
+      
+      if (cart && cart.appliedPromotions && cart.appliedPromotions.length > 0) {
+        console.log('Processing applied promotions for order:', order._id);
+        
+        for (const appliedPromotion of cart.appliedPromotions) {
+          try {
+            // Update the promotion usageHistory with the order reference
+            const promotion = await Promotion.findById(appliedPromotion.promotion);
+            if (promotion) {
+              // Find the usage entry that doesn't have an order reference yet
+              const usageEntry = promotion.usageHistory.find(
+                usage => usage.user && usage.user.toString() === userId.toString() && !usage.order
+              );
+              
+              if (usageEntry) {
+                usageEntry.order = order._id;
+                await promotion.save();
+                console.log('Updated promotion usageHistory with order reference:', {
+                  promotionId: promotion._id,
+                  orderId: order._id
+                });
+              }
+            }
+            
+            // Create AppliedPromotion record
+            const appliedPromotionRecord = new AppliedPromotion({
+              promotion: appliedPromotion.promotion,
+              order: order._id,
+              user: userId,
+              store: order.store,
+              code: appliedPromotion.code,
+              type: promotion?.type || 'unknown',
+              appliedDiscounts: [], // This would need to be populated based on the actual discounts applied
+              totalDiscountAmount: appliedPromotion.discountAmount || 0,
+              originalCartTotal: orderData.totalPrice || 0,
+              finalCartTotal: (orderData.totalPrice || 0) - (appliedPromotion.discountAmount || 0),
+              status: 'applied'
+            });
+            
+            await appliedPromotionRecord.save();
+            console.log('Created AppliedPromotion record:', {
+              appliedPromotionId: appliedPromotionRecord._id,
+              promotionId: appliedPromotion.promotion,
+              orderId: order._id
+            });
+            
+          } catch (promotionError) {
+            console.error('Error processing applied promotion:', promotionError);
+            // Don't fail the order creation if promotion tracking fails
+          }
+        }
+        
+        // Clear applied promotions from cart after order creation
+        cart.appliedPromotions = [];
+        await cart.save();
+        console.log('Cleared applied promotions from cart after order creation');
+        
+      } else {
+        console.log('No applied promotions found for order:', order._id);
+      }
+    } catch (promotionTrackingError) {
+      console.error('Error handling promotion usage tracking:', promotionTrackingError);
+      // Don't fail the order creation if promotion tracking fails
+    }
 
     // Update subscription metadata if it's a recurring order with subscription
     if (order.stripeSubscriptionId) {

@@ -39,6 +39,10 @@ const getAllOrdersAdmin = async (req, res) => {
       .populate('user', 'name email phone')
       .populate('store', 'name location status')
       .populate('payment')
+      .populate({
+        path: 'appliedPromotions.promotionId',
+        select: 'name description type code'
+      })
       .sort(sortOptions)
       .lean();
 
@@ -59,6 +63,11 @@ const getAllOrdersAdmin = async (req, res) => {
         notes: order.notes,
         orderItems: order.orderItems,
         price: order.DocTotal,
+        originalTotal: order.originalTotal || order.DocTotal,
+        totalDiscount: order.totalDiscount || 0,
+        finalTotal: order.finalTotal || order.DocTotal,
+        appliedPromotions: order.appliedPromotions || [],
+        appliedDiscounts: order.appliedDiscounts || [],
         paymentStatus: order.payment_status,
         paymentType: order.paymentMethod,
         payment: payment || null,
@@ -101,6 +110,10 @@ const getOrderDetailsAdmin = async (req, res) => {
       .populate('user', 'name email phone')
       .populate('store', 'name location status')
       .populate('payment')
+      .populate({
+        path: 'appliedPromotions.promotionId',
+        select: 'name description type code'
+      })
       .lean();
 
     if (!order) {
@@ -130,6 +143,11 @@ const getOrderDetailsAdmin = async (req, res) => {
       notes: order.notes,
       orderItems: order.orderItems,
       price: order.DocTotal,
+      originalTotal: order.originalTotal || order.DocTotal,
+      totalDiscount: order.totalDiscount || 0,
+      finalTotal: order.finalTotal || order.DocTotal,
+      appliedPromotions: order.appliedPromotions || [],
+      appliedDiscounts: order.appliedDiscounts || [],
       paymentStatus: order.payment_status,
       paymentType: order.paymentMethod,
       payment: payment || null,
@@ -172,7 +190,11 @@ const updateOrderTrackingAdmin = async (req, res) => {
     const order = await SalesOrder.findById(orderId)
       .populate('user', 'name email phone')
       .populate('store', 'name location status')
-      .populate('payment');
+      .populate('payment')
+      .populate({
+        path: 'appliedPromotions.promotionId',
+        select: 'name description type code'
+      });
 
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found' });
@@ -233,6 +255,10 @@ const updateOrderTrackingAdmin = async (req, res) => {
       .populate('user', 'name email phone')
       .populate('store', 'name location status')
       .populate('payment')
+      .populate({
+        path: 'appliedPromotions.promotionId',
+        select: 'name description type code'
+      })
       .lean();
 
     // Find payment if not already populated (for legacy data)
@@ -251,6 +277,11 @@ const updateOrderTrackingAdmin = async (req, res) => {
       notes: updatedOrder.notes,
       orderItems: updatedOrder.orderItems,
       price: updatedOrder.DocTotal,
+      originalTotal: updatedOrder.originalTotal || updatedOrder.DocTotal,
+      totalDiscount: updatedOrder.totalDiscount || 0,
+      finalTotal: updatedOrder.finalTotal || updatedOrder.DocTotal,
+      appliedPromotions: updatedOrder.appliedPromotions || [],
+      appliedDiscounts: updatedOrder.appliedDiscounts || [],
       paymentStatus: updatedOrder.payment_status,
       paymentType: updatedOrder.paymentMethod,
       payment: payment || null,
@@ -313,13 +344,27 @@ const getOrderStatsAdmin = async (req, res) => {
       }
     ]);
 
+    // Get discount stats
+    const discountStats = await SalesOrder.aggregate([
+      { $match: { ...filter, totalDiscount: { $gt: 0 } } },
+      {
+        $group: {
+          _id: null,
+          totalSavings: { $sum: '$totalDiscount' },
+          discountedOrders: { $sum: 1 }
+        }
+      }
+    ]);
+
     const stats = {
       total: totalOrders,
       pending: pendingOrders,
       shipped: shippedOrders,
       delivered: deliveredOrders,
       totalRevenue: revenueStats[0]?.totalRevenue || 0,
-      avgOrderValue: revenueStats[0]?.avgOrderValue || 0
+      avgOrderValue: revenueStats[0]?.avgOrderValue || 0,
+      totalSavings: discountStats[0]?.totalSavings || 0,
+      discountedOrders: discountStats[0]?.discountedOrders || 0
     };
 
     return res.status(200).json({
@@ -355,6 +400,10 @@ const exportOrdersAdmin = async (req, res) => {
       .populate('user', 'name email phone')
       .populate('store', 'name location status')
       .populate('payment')
+      .populate({
+        path: 'appliedPromotions.promotionId',
+        select: 'name description type code'
+      })
       .lean();
 
     // For now, return JSON. You can implement CSV/Excel export later
@@ -495,7 +544,11 @@ const sendOrderNotificationAdmin = async (req, res) => {
 
     const order = await SalesOrder.findById(orderId)
       .populate('user', 'name email phone')
-      .populate('store', 'name location status');
+      .populate('store', 'name location status')
+      .populate({
+        path: 'appliedPromotions.promotionId',
+        select: 'name description type code'
+      });
 
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found' });
@@ -546,7 +599,11 @@ const getOrderTimelineAdmin = async (req, res) => {
 
     const order = await SalesOrder.findById(orderId)
       .populate('user', 'name email phone')
-      .populate('store', 'name location status');
+      .populate('store', 'name location status')
+      .populate({
+        path: 'appliedPromotions.promotionId',
+        select: 'name description type code'
+      });
 
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found' });

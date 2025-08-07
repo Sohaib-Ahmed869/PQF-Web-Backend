@@ -64,6 +64,7 @@ const cartRouter = require('./Routes/CartRouter');
 const paymentRouter = require('./Routes/PaymentRouter');
 const translationRouter = require('./Routes/TranslationRouter');
 const disputeRouter = require('./Routes/DisputeRouter');
+const promotionRouter = require('./Routes/PromotionRouter');
 
 // SuperAdmin routes
 const storeRoutes = require('./Routes/SuperAdmin/StoreRouter');
@@ -88,6 +89,7 @@ app.use('/api/cart', cartRouter);
 app.use('/api/payment', paymentRouter);
 app.use('/api/translation', translationRouter);
 app.use('/api/orderdispute', disputeRouter);
+app.use('/api/promotions', promotionRouter);
 
 // mount SuperAdmin Routes
 app.use('/api/superAdmin/stores', storeRoutes);

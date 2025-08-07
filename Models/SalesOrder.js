@@ -583,7 +583,12 @@ const OrderSchema = new Schema(
         price: Number,
         quantity: Number,
         product: String,
-        image: String
+        image: String,
+        // Free item fields
+        isFreeItem: { type: Boolean, default: false },
+        freeQuantity: { type: Number, default: 0 },
+        regularQuantity: { type: Number, default: 0 },
+        discountAmount: { type: Number, default: 0 }
       }
     ],
 
@@ -687,6 +692,34 @@ const OrderSchema = new Schema(
       default: false
     },
 
+    // Promotion and discount tracking fields
+    originalTotal: {
+      type: Number,
+      default: null
+    },
+    totalDiscount: {
+      type: Number,
+      default: 0
+    },
+    finalTotal: {
+      type: Number,
+      default: null
+    },
+    appliedPromotions: [{
+      promotionId: { type: Schema.Types.ObjectId, ref: 'Promotion' },
+      name: String,
+      code: String,
+      type: String,
+      description: String,
+      discountAmount: { type: Number, default: 0 },
+      appliedAt: { type: Date, default: Date.now }
+    }],
+    appliedDiscounts: [{
+      type: { type: String },
+      description: String,
+      discountAmount: { type: Number, default: 0 },
+      appliedAt: { type: Date, default: Date.now }
+    }]
 
   },
   {

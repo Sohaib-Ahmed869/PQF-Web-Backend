@@ -5,6 +5,7 @@ const authenticate = require('../Middleware/Authentication');
 
 // All routes require authentication
 router.use(authenticate.protect);
+
 // Get current user's cart
 router.get('/', CartController.getCart);
 
@@ -22,6 +23,11 @@ router.post('/clear', CartController.clearCart);
 
 // Sync guest cart with user cart
 router.post('/sync', CartController.syncGuestCart);
+
+// Promotion-related routes
+router.post('/apply-promotion', CartController.applyPromotion);
+router.get('/applicable-promotions', CartController.getApplicablePromotions);
+
 // List abandoned carts (admin only - add admin middleware as needed)
 router.get('/abandoned', CartController.listAbandoned);
 

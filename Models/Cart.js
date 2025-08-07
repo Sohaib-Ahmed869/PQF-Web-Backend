@@ -20,6 +20,19 @@ const CartItemSchema = new mongoose.Schema({
   addedAt: {
     type: Date,
     default: Date.now
+  },
+  // Fields for free items (added due to promotions)
+  isFreeItem: {
+    type: Boolean,
+    default: false
+  },
+  freeQuantity: {
+    type: Number,
+    default: 0
+  },
+  discountAmount: {
+    type: Number,
+    default: 0
   }
 }, { _id: false });
 
@@ -52,6 +65,27 @@ const CartSchema = new mongoose.Schema({
     default: Date.now,
     index: true
   },
+  // Track applied promotions
+  appliedPromotions: [{
+    promotion: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Promotion',
+      required: true
+    },
+    appliedAt: {
+      type: Date,
+      default: Date.now
+    },
+    discountAmount: {
+      type: Number,
+      default: 0
+    },
+    code: {
+      type: String,
+      trim: true,
+      uppercase: true
+    }
+  }],
   metadata: {
     userAgent: String,
     ipAddress: String,
@@ -74,7 +108,18 @@ CartSchema.index({ lastUpdated: 1, status: 1 });
 // Virtual for total calculation
 CartSchema.virtual('total').get(function() {
   return this.items.reduce((sum, item) => {
-    return sum + (item.price * item.quantity);
+    // If item is free or has free quantity, only charge for the non-free portion
+    if (item.isFreeItem) {
+      // If the entire item is free, don't add anything to total
+      return sum;
+    } else if (item.freeQuantity && item.freeQuantity > 0) {
+      // If item has free quantity, only charge for the non-free portion
+      const chargeableQuantity = item.quantity - item.freeQuantity;
+      return sum + (item.price * Math.max(0, chargeableQuantity));
+    } else {
+      // Regular item, charge full price
+      return sum + (item.price * item.quantity);
+    }
   }, 0);
 });
 
