@@ -1028,5 +1028,246 @@ module.exports = {
       console.error('Error listing abandoned carts:', err);
       res.status(500).json({ success: false, error: err.message });
     }
+  },
+
+// Remove promotion from cart - UPDATED VERSION
+async removePromotion(req, res) {
+  try {
+    const { promotionId } = req.params;
+    const cart = await getOrCreateActiveCart(req.user._id);
+    
+    // Ensure cart is populated
+    await cart.populate([
+      'items.product',
+      {
+        path: 'appliedPromotions.promotion',
+        select: 'name description type code'
+      }
+    ]);
+    
+    // Find the promotion to remove
+    const promotionIndex = cart.appliedPromotions.findIndex(
+      ap => {
+        // Handle both populated and unpopulated promotion objects
+        let apPromotionId;
+        if (ap.promotion && typeof ap.promotion === 'object' && ap.promotion._id) {
+          // If promotion is populated (has _id field)
+          apPromotionId = ap.promotion._id;
+        } else {
+          // If promotion is just an ObjectId
+          apPromotionId = ap.promotion;
+        }
+        
+        const apPromotionIdString = apPromotionId?.toString();
+        const targetPromotionIdString = promotionId?.toString();
+        
+        return apPromotionIdString === targetPromotionIdString;
+      }
+    );
+    
+    if (promotionIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        error: 'Promotion not found in cart'
+      });
+    }
+    
+    const promotionToRemove = cart.appliedPromotions[promotionIndex];
+    
+    // STEP 1: Update promotion usage tracking - DECREMENT and REMOVE USAGE HISTORY
+    try {
+      const promotion = await Promotion.findById(promotionId);
+      if (promotion) {
+        // Decrement currentUsage
+        if (promotion.currentUsage > 0) {
+          promotion.currentUsage -= 1;
+        }
+        
+        // Remove the usage history entry for this user that doesn't have an order reference
+        // or has an order reference but the order was created recently (for safety)
+        const userUsageIndex = promotion.usageHistory.findIndex(
+          usage => usage.user && usage.user.toString() === req.user._id.toString() && 
+          (!usage.order || (usage.order && usage.usedAt && new Date() - new Date(usage.usedAt) < 24 * 60 * 60 * 1000)) // within 24 hours
+        );
+        
+        if (userUsageIndex !== -1) {
+          promotion.usageHistory.splice(userUsageIndex, 1);
+          console.log('Removed usage history entry for user:', req.user._id, 'promotion:', promotion._id);
+        }
+        
+        await promotion.save();
+        console.log('Updated promotion usage tracking after removal:', {
+          promotionId: promotion._id,
+          newCurrentUsage: promotion.currentUsage,
+          remainingUsageHistory: promotion.usageHistory.length
+        });
+      }
+    } catch (usageError) {
+      console.error('Error updating promotion usage tracking during removal:', usageError);
+      // Continue with cart update even if usage tracking fails
+    }
+    
+    // STEP 2: Remove applied promotion record if it exists
+    try {
+      await AppliedPromotion.deleteMany({
+        promotion: promotionId,
+        user: req.user._id,
+        order: null // Only remove if no order is associated (cart-level application)
+      });
+      console.log('Removed AppliedPromotion records for promotion:', promotionId);
+    } catch (appliedPromotionError) {
+      console.error('Error removing AppliedPromotion records:', appliedPromotionError);
+      // Continue with cart update
+    }
+    
+    // STEP 3: Remove the promotion from cart
+    cart.appliedPromotions.splice(promotionIndex, 1);
+    
+    // STEP 4: Remove free items that were added by this promotion
+    if (promotionToRemove.promotion) {
+      const promotion = await Promotion.findById(promotionToRemove.promotion);
+      if (promotion && promotion.type === 'buyXGetY') {
+        // Remove free items that were added by this promotion
+        cart.items = cart.items.filter(item => !item.isFreeItem || item.freeQuantity === 0);
+        
+        // Reset freeQuantity for items that had free quantities added
+        cart.items.forEach(item => {
+          if (item.freeQuantity && item.freeQuantity > 0) {
+            item.quantity = Math.max(0, item.quantity - item.freeQuantity);
+            item.freeQuantity = 0;
+          }
+        });
+      }
+    }
+    
+    await cart.save();
+    
+    // Re-populate the cart
+    await cart.populate([
+      'items.product',
+      {
+        path: 'appliedPromotions.promotion',
+        select: 'name description type code'
+      }
+    ]);
+    
+    // Calculate totals
+    const totals = await calculateCartTotals(cart, []);
+    
+    res.json({
+      success: true,
+      data: {
+        message: 'Promotion removed successfully',
+        cart: {
+          ...cart.toObject(),
+          ...totals
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error removing promotion from cart:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to remove promotion from cart'
+    });
   }
+},
+
+// Remove all promotions from cart - UPDATED VERSION
+async removeAllPromotions(req, res) {
+  try {
+    const cart = await getOrCreateActiveCart(req.user._id);
+    
+    // Ensure cart is populated
+    await cart.populate([
+      'items.product',
+      {
+        path: 'appliedPromotions.promotion',
+        select: 'name description type code'
+      }
+    ]);
+    
+    // STEP 1: Update usage tracking for each applied promotion
+    for (const appliedPromotion of cart.appliedPromotions) {
+      try {
+        const promotion = await Promotion.findById(appliedPromotion.promotion);
+        if (promotion) {
+          // Decrement currentUsage
+          if (promotion.currentUsage > 0) {
+            promotion.currentUsage -= 1;
+          }
+          
+          // Remove the usage history entry for this user
+          const userUsageIndex = promotion.usageHistory.findIndex(
+            usage => usage.user && usage.user.toString() === req.user._id.toString() && 
+            (!usage.order || (usage.order && usage.usedAt && new Date() - new Date(usage.usedAt) < 24 * 60 * 60 * 1000))
+          );
+          
+          if (userUsageIndex !== -1) {
+            promotion.usageHistory.splice(userUsageIndex, 1);
+          }
+          
+          await promotion.save();
+        }
+      } catch (usageError) {
+        console.error('Error updating promotion usage tracking:', usageError);
+      }
+    }
+    
+    // STEP 2: Remove applied promotion records
+    try {
+      await AppliedPromotion.deleteMany({
+        user: req.user._id,
+        order: null // Only remove cart-level applications
+      });
+    } catch (appliedPromotionError) {
+      console.error('Error removing AppliedPromotion records:', appliedPromotionError);
+    }
+    
+    // STEP 3: Remove all promotions from cart
+    cart.appliedPromotions = [];
+    
+    // STEP 4: Remove all free items that were added by promotions
+    cart.items = cart.items.filter(item => !item.isFreeItem);
+    
+    // Reset freeQuantity for all items
+    cart.items.forEach(item => {
+      if (item.freeQuantity && item.freeQuantity > 0) {
+        item.quantity = Math.max(0, item.quantity - item.freeQuantity);
+        item.freeQuantity = 0;
+      }
+    });
+    
+    await cart.save();
+    
+    // Re-populate the cart
+    await cart.populate([
+      'items.product',
+      {
+        path: 'appliedPromotions.promotion',
+        select: 'name description type code'
+      }
+    ]);
+    
+    // Calculate totals
+    const totals = await calculateCartTotals(cart, []);
+    
+    res.json({
+      success: true,
+      data: {
+        message: 'All promotions removed successfully',
+        cart: {
+          ...cart.toObject(),
+          ...totals
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error removing all promotions from cart:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to remove promotions from cart'
+    });
+  }
+}
 };

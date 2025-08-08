@@ -28,6 +28,10 @@ router.post('/sync', CartController.syncGuestCart);
 router.post('/apply-promotion', CartController.applyPromotion);
 router.get('/applicable-promotions', CartController.getApplicablePromotions);
 
+// Promotion removal routes - ORDER MATTERS: more specific first
+router.delete('/promotions/:promotionId', CartController.removePromotion);
+router.delete('/promotions', CartController.removeAllPromotions);
+
 // List abandoned carts (admin only - add admin middleware as needed)
 router.get('/abandoned', CartController.listAbandoned);
 

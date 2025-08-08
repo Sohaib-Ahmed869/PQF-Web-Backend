@@ -2096,6 +2096,27 @@ exports.createOrderAfterPayment = async (req, res) => {
                 await promotion.save();
                 console.log('Updated promotion usageHistory with order reference:', {
                   promotionId: promotion._id,
+                  orderId: order._id,
+                  usageEntryId: usageEntry._id
+                });
+              } else {
+                // If no usage entry found, create one (this might happen for buyXGetY promotions)
+                console.log('No usage entry found for promotion, creating new one:', {
+                  promotionId: promotion._id,
+                  userId: userId
+                });
+                
+                // Add to usageHistory
+                promotion.usageHistory.push({
+                  user: userId,
+                  order: order._id,
+                  usedAt: new Date(),
+                  discountAmount: appliedPromotion.discountAmount || 0
+                });
+                
+                await promotion.save();
+                console.log('Created new usage entry for promotion:', {
+                  promotionId: promotion._id,
                   orderId: order._id
                 });
               }
