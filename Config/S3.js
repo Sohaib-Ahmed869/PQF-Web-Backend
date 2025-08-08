@@ -106,7 +106,7 @@ const productUpload = multer({
   limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
 });
 
-// Multer for user documents (trade license, ID documents)
+// Multer for user documents (trade license, ID documents, bank statement)
 const documentUpload = multer({
   storage: multerS3({
     s3: s3Client,
@@ -134,7 +134,8 @@ const documentUpload = multer({
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit for documents
 }).fields([
   { name: 'tradeLicense', maxCount: 1 },
-  { name: 'idDocument', maxCount: 1 }
+  { name: 'idDocument', maxCount: 1 },
+  { name: 'bankStatement', maxCount: 1 }
 ]);
 
 // Function to delete object from S3

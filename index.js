@@ -17,10 +17,6 @@ app.use('/api/payment/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// Rest of your middleware...
-const passport = require('./Config/passport');
-app.use(passport.initialize());
-
 // CORS configuration
 const allowedOrigins = [
   'http://localhost:3000',

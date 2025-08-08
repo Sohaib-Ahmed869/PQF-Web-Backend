@@ -118,6 +118,21 @@ const register = async (req, res) => {
     console.log('Registration - isCustomerRegistration:', isCustomerRegistration);
     
     if (isCustomerRegistration && req.files) {
+      // Validate required documents for customer registration
+      if (!req.files.tradeLicense || !req.files.tradeLicense[0]) {
+        return res.status(400).json({
+          success: false,
+          message: 'Trade License is required for registration'
+        });
+      }
+      
+      if (!req.files.idDocument || !req.files.idDocument[0]) {
+        return res.status(400).json({
+          success: false,
+          message: 'ID Document is required for registration'
+        });
+      }
+      
       if (req.files.tradeLicense && req.files.tradeLicense[0]) {
         console.log('Processing trade license:', req.files.tradeLicense[0]);
         documents.tradeLicense = {
@@ -133,6 +148,16 @@ const register = async (req, res) => {
         documents.idDocument = {
           url: req.files.idDocument[0].location,
           filename: req.files.idDocument[0].originalname,
+          uploadedAt: new Date(),
+          verified: false
+        };
+      }
+      
+      if (req.files.bankStatement && req.files.bankStatement[0]) {
+        console.log('Processing bank statement:', req.files.bankStatement[0]);
+        documents.bankStatement = {
+          url: req.files.bankStatement[0].location,
+          filename: req.files.bankStatement[0].originalname,
           uploadedAt: new Date(),
           verified: false
         };

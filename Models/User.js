@@ -20,9 +20,7 @@ const userSchema = new Schema({
   },
   password: {
     type: String,
-    required: function() {
-      return !this.socialLogin.enabled;
-    },
+    required: true,
     minlength: [8, 'Password must be at least 8 characters long'],
     select: false
   },
@@ -51,13 +49,6 @@ const userSchema = new Schema({
   lastLogin: {
     type: Date,
     default: Date.now
-  },
-  socialLogin: {
-    enabled: { type: Boolean, default: false },
-    google: {
-      id: String,
-      email: String
-    },
   },
   status: {
     type: String,
@@ -128,6 +119,12 @@ const userSchema = new Schema({
       verified: { type: Boolean, default: false }
     },
     idDocument: {
+      url: String,
+      filename: String,
+      uploadedAt: Date,
+      verified: { type: Boolean, default: false }
+    },
+    bankStatement: {
       url: String,
       filename: String,
       uploadedAt: Date,
