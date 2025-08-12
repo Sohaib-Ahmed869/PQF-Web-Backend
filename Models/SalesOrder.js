@@ -613,6 +613,28 @@ const OrderSchema = new Schema(
     // Store reference
     store: { type: Schema.Types.ObjectId, ref: 'Store', required: false },
 
+    // Time slot selection for delivery
+    deliveryTimeSlot: {
+      type: String,
+      enum: ['9-12', '12-3', '3-6', '6-9'],
+      default: null
+    },
+    deliveryDate: {
+      type: Date,
+      default: null
+    },
+
+    // Time slot selection for pickup
+    pickupTimeSlot: {
+      type: String,
+      enum: ['9-12', '12-3', '3-6', '6-9'],
+      default: null
+    },
+    pickupDate: {
+      type: Date,
+      default: null
+    },
+
     // Order tracking fields
     trackingNumber: { type: String, default: null },
     trackingStatus: { type: String, enum: ['pending', 'shipped', 'in transit', 'delivered', 'cancelled'], default: 'pending' },

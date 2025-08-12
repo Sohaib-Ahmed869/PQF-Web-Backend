@@ -137,17 +137,17 @@ const getFeaturedProducts = async (req, res) => {
     if (!storeId) {
       return res.status(400).json({ success: false, message: 'storeId is required' });
     }
-    
-    // Get products that are in stock, available, and sort by stock quantity (highest first)
-    const products = await Product.find({ 
-      store: storeId, 
+
+    // Get only featured products that are available
+    const products = await Product.find({
+      store: storeId,
       Valid: 'tYES',
-      QuantityOnStock: { $gt: 0 } 
+      featured: true
     })
-      .sort({ QuantityOnStock: -1 }) // Sort by stock quantity descending
+      .sort({ featured: -1, QuantityOnStock: -1 }) // Sort by featured first, then by stock quantity
       .limit(12)
       .lean();
-      
+
     const shapedProducts = products.map(shapeProduct);
     return res.status(200).json({
       success: true,

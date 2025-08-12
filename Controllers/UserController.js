@@ -25,9 +25,18 @@ const generateToken = (user) => {
     { expiresIn: '30d' }
   );
 };
-const register = async (req, res) => {
+
+// CUSTOMER REGISTRATION - Single step for customers
+const registerCustomer = async (req, res) => {
   try {
-    const { name, email, password, role, assignedStore, phone, agreeToTerms, agreeToPrivacy } = req.body;
+    const { 
+      name, 
+      email, 
+      password, 
+      phone, 
+      agreeToTerms, 
+      agreeToPrivacy 
+    } = req.body;
 
     // Check if user already exists
     const existingUser = await User.findOne({ email });
@@ -38,275 +47,486 @@ const register = async (req, res) => {
       });
     }
 
-    // --- SUPER ADMIN REGISTRATION LOGIC ---
-    if (role === 'superAdmin') {
-      const superAdminCount = await User.countDocuments({ role: 'superAdmin' });
-      if (superAdminCount === 0) {
-        // Allow public registration of the first superAdmin
-        const user = await User.create({ name, email, password, role: 'superAdmin' });
-        const token = generateToken(user);
-        user.password = undefined;
-        return res.status(201).json({
-          success: true,
-          message: 'Super admin registered successfully',
-          data: { user, token }
-        });
-      } else {
-        // Only an authenticated superAdmin can create another superAdmin
-        if (!req.user || req.user.role !== 'superAdmin') {
-          return res.status(403).json({
-            success: false,
-            message: 'Only an existing super admin can create another super admin'
-          });
-        }
-        // Allow superAdmin to create another superAdmin
-        const user = await User.create({ name, email, password, role: 'superAdmin', createdBy: req.user._id });
-        const token = generateToken(user);
-        user.password = undefined;
-        return res.status(201).json({
-          success: true,
-          message: 'Super admin registered successfully',
-          data: { user, token }
-        });
-      }
-    }
-    const isAdminCreation = role === 'admin' || req.route.path === '/create-admin';
-    const isCustomerRegistration = !role || role === 'customer';
-
-    // Role-based validation
-    if (isAdminCreation) {
-      // Check if request is authenticated and user is super admin
-      if (!req.user || req.user.role !== 'superAdmin') {
-        return res.status(403).json({
-          success: false,
-          message: 'Only super admin can create admin users'
-        });
-      }
-
-      // Validate store assignment for admin
-      if (!assignedStore) {
-        return res.status(400).json({
-          success: false,
-          message: 'Store assignment is required for admin users'
-        });
-      }
-
-      const store = await Store.findById(assignedStore);
-      if (!store) {
-        return res.status(404).json({
-          success: false,
-          message: 'Assigned store not found'
-        });
-      }
+    // Validate required fields
+    if (!name || !email || !password || !phone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please fill in all required fields'
+      });
     }
 
-    // Validate terms and conditions agreement for customer registration only
-    if (isCustomerRegistration) {
-      if (!agreeToTerms || !agreeToPrivacy) {
-        return res.status(400).json({
-          success: false,
-          message: 'You must agree to both Terms and Conditions and Privacy Policy to register'
-        });
-      }
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please enter a valid email address'
+      });
     }
 
-    // Handle document uploads for customer registration
-    let documents = {};
-    let documentVerificationStatus = 'pending';
-    
-    console.log('Registration - req.files:', req.files);
-    console.log('Registration - isCustomerRegistration:', isCustomerRegistration);
-    
-    if (isCustomerRegistration && req.files) {
-      // Validate required documents for customer registration
-      if (!req.files.tradeLicense || !req.files.tradeLicense[0]) {
-        return res.status(400).json({
-          success: false,
-          message: 'Trade License is required for registration'
-        });
-      }
-      
-      if (!req.files.idDocument || !req.files.idDocument[0]) {
-        return res.status(400).json({
-          success: false,
-          message: 'ID Document is required for registration'
-        });
-      }
-      
-      if (req.files.tradeLicense && req.files.tradeLicense[0]) {
-        console.log('Processing trade license:', req.files.tradeLicense[0]);
-        documents.tradeLicense = {
-          url: req.files.tradeLicense[0].location,
-          filename: req.files.tradeLicense[0].originalname,
-          uploadedAt: new Date(),
-          verified: false
-        };
-      }
-      
-      if (req.files.idDocument && req.files.idDocument[0]) {
-        console.log('Processing ID document:', req.files.idDocument[0]);
-        documents.idDocument = {
-          url: req.files.idDocument[0].location,
-          filename: req.files.idDocument[0].originalname,
-          uploadedAt: new Date(),
-          verified: false
-        };
-      }
-      
-      if (req.files.bankStatement && req.files.bankStatement[0]) {
-        console.log('Processing bank statement:', req.files.bankStatement[0]);
-        documents.bankStatement = {
-          url: req.files.bankStatement[0].location,
-          filename: req.files.bankStatement[0].originalname,
-          uploadedAt: new Date(),
-          verified: false
-        };
-      }
-      
-      // Set document verification status
-      if (Object.keys(documents).length > 0) {
-        documentVerificationStatus = 'pending';
-      }
+    // Validate password strength
+    if (password.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 8 characters long'
+      });
     }
 
-    // Create user
+    // Validate phone number
+    if (!phone || phone.trim().length < 10) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please enter a valid phone number'
+      });
+    }
+
+    // Validate terms agreement
+    if (!agreeToTerms || !agreeToPrivacy) {
+      return res.status(400).json({
+        success: false,
+        message: 'You must agree to both Terms and Conditions and Privacy Policy to register'
+      });
+    }
+
     const userData = {
       name,
       email,
       password,
-      role: isAdminCreation ? 'admin' : 'customer'
+      phone,
+      role: 'customer',
+      registrationType: 'customer',
+      registrationStep: 'completed',
+      termsAndConditions: {
+        agreed: true,
+        agreedAt: new Date(),
+        version: '1.0'
+      },
+      privacyPolicy: {
+        agreed: true,
+        agreedAt: new Date(),
+        version: '1.0'
+      },
+      documentVerificationStatus: 'verified' // Customers don't need document verification
     };
 
-    if (!isAdminCreation && phone) {
-      userData.phone = phone;
+    const user = await User.create(userData);
+
+    // Create Customer document and link
+    const customerDoc = new Customer({
+      CardName: name,
+      Email: email,
+      phoneNumber: phone,
+      user: user._id,
+      customerType: 'non-sap',
+      status: 'active',
+    });
+    await customerDoc.save();
+    
+    user.customer = customerDoc._id;
+    await user.save();
+
+    // Generate token for completed registration
+    const token = generateToken(user);
+    user.password = undefined;
+
+    return res.status(201).json({
+      success: true,
+      message: 'Customer registration completed successfully!',
+      user,
+      token
+    });
+
+  } catch (error) {
+    console.error('Customer registration error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error during customer registration',
+      error: error.message
+    });
+  }
+};
+
+// BUSINESS REGISTRATION - Single API call with everything
+const registerBusiness = async (req, res) => {
+  try {
+    const { 
+      name, 
+      email, 
+      password, 
+      phone, 
+      agreeToTerms, 
+      agreeToPrivacy
+    } = req.body;
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: 'User already exists with this email'
+      });
     }
 
-    // Add terms and conditions agreement for customer registration only
-    if (isCustomerRegistration) {
-      userData.termsAndConditions = {
+    // Validate required fields
+    if (!name || !email || !password || !phone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please fill in all required fields (name, email, password, phone)'
+      });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please enter a valid email address'
+      });
+    }
+
+    // Validate password strength
+    if (password.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 8 characters long'
+      });
+    }
+
+    // Validate phone number
+    if (!phone || phone.trim().length < 10) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please enter a valid phone number'
+      });
+    }
+
+    // Validate required documents
+    if (!req.files || !req.files.tradeLicense || !req.files.tradeLicense[0]) {
+      return res.status(400).json({
+        success: false,
+        message: 'Trade License is required for business registration'
+      });
+    }
+    
+    if (!req.files.idDocument || !req.files.idDocument[0]) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID Document is required for business registration'
+      });
+    }
+
+    // Validate terms agreement
+    if (!agreeToTerms || !agreeToPrivacy) {
+      return res.status(400).json({
+        success: false,
+        message: 'You must agree to both Terms and Conditions and Privacy Policy to register'
+      });
+    }
+
+    // Prepare documents object
+    let documents = {};
+    
+    // Process mandatory documents
+    documents.tradeLicense = {
+      url: req.files.tradeLicense[0].location,
+      filename: req.files.tradeLicense[0].originalname,
+      uploadedAt: new Date(),
+      verified: false,
+      required: true
+    };
+    
+    documents.idDocument = {
+      url: req.files.idDocument[0].location,
+      filename: req.files.idDocument[0].originalname,
+      uploadedAt: new Date(),
+      verified: false,
+      required: true
+    };
+
+    // Process optional bank statement if provided
+    if (req.files.bankStatement && req.files.bankStatement.length > 0) {
+      console.log('Processing bank statements:', req.files.bankStatement.length, 'files');
+      console.log('Bank statement months from body:', req.body.bankStatementMonth);
+      
+      if (req.files.bankStatement.length > 1) {
+        // Multiple monthly statements
+        documents.bankStatements = req.files.bankStatement.map((file, index) => {
+          // Get the corresponding month from the request body
+          let month = `month_${index + 1}`;
+          if (req.body.bankStatementMonth && Array.isArray(req.body.bankStatementMonth)) {
+            month = req.body.bankStatementMonth[index] || `month_${index + 1}`;
+          }
+          
+          console.log(`Processing bank statement ${index + 1}: month=${month}, filename=${file.originalname}`);
+          
+          return {
+            url: file.location,
+            filename: file.originalname,
+            uploadedAt: new Date(),
+            verified: false,
+            required: false,
+            month: month
+          };
+        });
+        console.log('Created bankStatements array:', documents.bankStatements.length, 'items');
+      } else {
+        // Single 6-month statement
+        documents.bankStatement = {
+          url: req.files.bankStatement[0].location,
+          filename: req.files.bankStatement[0].originalname,
+          uploadedAt: new Date(),
+          verified: false,
+          required: false
+        };
+        console.log('Created single bankStatement:', documents.bankStatement.filename);
+      }
+    }
+
+    // Create user data
+    const userData = {
+      name,
+      email,
+      password,
+      phone,
+      role: 'customer',
+      registrationType: 'business',
+      registrationStep: 'completed',
+      documentVerificationStatus: 'pending',
+      documents,
+      termsAndConditions: {
         agreed: agreeToTerms,
         agreedAt: new Date(),
         version: '1.0'
-      };
-      userData.privacyPolicy = {
+      },
+      privacyPolicy: {
         agreed: agreeToPrivacy,
         agreedAt: new Date(),
         version: '1.0'
-      };
-    }
+      }
+    };
 
-    if (isAdminCreation) {
-      userData.assignedStore = assignedStore;
-      userData.createdBy = req.user._id;
-    }
-
-    // Add documents and verification status for customer registration
-    if (isCustomerRegistration && Object.keys(documents).length > 0) {
-      userData.documents = documents;
-      userData.documentVerificationStatus = documentVerificationStatus;
-    }
-
-    console.log('Final userData for creation:', userData);
+    // Create user
     const user = await User.create(userData);
 
-    // Update store with admin reference
-    if (isAdminCreation) {
-      await Store.findByIdAndUpdate(
-        assignedStore,
-        { $addToSet: { admins: user._id } }
-      );
-    }
-
-    // For customer registration, create a Customer document and link both ways
-    if (isCustomerRegistration) {
-      const customerDoc = new Customer({
-        CardName: name,
-        Email: email,
-        phoneNumber: phone,
-        user: user._id,
-        customerType: 'non-sap',
-        status: 'active',
-      });
-      await customerDoc.save();
-      // Link user to customer
-      user.customer = customerDoc._id;
-      await user.save();
-    }
-
-    // Generate token
-    const token = generateToken(user);
-
-    // Remove password from response
-    user.password = undefined;
-
-    res.status(201).json({
-      success: true,
-      message: `${isAdminCreation ? 'Admin' : 'Customer'} registered successfully`,
-      data: {
-        user,
-        token
-      }
+    // Create Customer document and link
+    const customerDoc = new Customer({
+      CardName: name,
+      Email: email,
+      phoneNumber: phone,
+      user: user._id,
+      customerType: 'non-sap',
+      status: 'active',
     });
-
-  } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error during registration',
-      error: error.message
-    });
-  }
-};
-
-// Update document verification status (for admin use)
-const updateDocumentVerification = async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { status, notes } = req.body;
-
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    user.documentVerificationStatus = status;
-    if (notes) {
-      user.documentVerificationNotes = notes;
-    }
-
-    // Update verification status for individual documents
-    if (status === 'verified') {
-      if (user.documents.tradeLicense) {
-        user.documents.tradeLicense.verified = true;
-      }
-      if (user.documents.idDocument) {
-        user.documents.idDocument.verified = true;
-      }
-    }
-
+    await customerDoc.save();
+    
+    user.customer = customerDoc._id;
     await user.save();
 
-    res.json({
+    // Generate token for completed registration
+    const token = generateToken(user);
+    user.password = undefined;
+
+    return res.status(201).json({
       success: true,
-      message: 'Document verification status updated successfully',
-      data: {
-        documentVerificationStatus: user.documentVerificationStatus,
-        documentVerificationNotes: user.documentVerificationNotes
-      }
+      message: 'Business registration completed successfully! Please wait for document verification.',
+      user,
+      token
     });
 
   } catch (error) {
-    console.error('Document verification update error:', error);
+    console.error('Business registration error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error during document verification update',
+      message: 'Server error during business registration',
       error: error.message
     });
   }
 };
+
+// ADMIN CREATION - By Super Admin only
+const createAdmin = async (req, res) => {
+  try {
+    const { 
+      name, 
+      email, 
+      password, 
+      assignedStore, 
+      phone, 
+      agreeToTerms, 
+      agreeToPrivacy 
+    } = req.body;
+
+    // Check authorization
+    if (!req.user || req.user.role !== 'superAdmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only super admin can create admin users'
+      });
+    }
+
+    // Validate required fields
+    if (!name || !email || !password || !assignedStore) {
+      return res.status(400).json({
+        success: false,
+        message: 'Name, email, password, and assigned store are required'
+      });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: 'User already exists with this email'
+      });
+    }
+
+    // Validate store exists
+    const store = await Store.findById(assignedStore);
+    if (!store) {
+      return res.status(404).json({
+        success: false,
+        message: 'Assigned store not found'
+      });
+    }
+
+    // Validate terms agreement
+    if (!agreeToTerms || !agreeToPrivacy) {
+      return res.status(400).json({
+        success: false,
+        message: 'You must agree to both Terms and Conditions and Privacy Policy to register'
+      });
+    }
+
+    const userData = {
+      name,
+      email,
+      password,
+      phone,
+      role: 'admin',
+      registrationType: 'business',
+      assignedStore,
+      createdBy: req.user._id,
+      termsAndConditions: {
+        agreed: agreeToTerms,
+        agreedAt: new Date(),
+        version: '1.0'
+      },
+      privacyPolicy: {
+        agreed: agreeToPrivacy,
+        agreedAt: new Date(),
+        version: '1.0'
+      },
+      registrationStep: 'completed',
+      documentVerificationStatus: 'verified'
+    };
+
+    const user = await User.create(userData);
+    
+    // Add admin to store
+    await Store.findByIdAndUpdate(assignedStore, { 
+      $addToSet: { admins: user._id } 
+    });
+
+    const token = generateToken(user);
+    user.password = undefined;
+
+    return res.status(201).json({
+      success: true,
+      message: 'Admin created successfully',
+      user,
+      token
+    });
+
+  } catch (error) {
+    console.error('Admin creation error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error during admin creation',
+      error: error.message
+    });
+  }
+};
+
+// SUPER ADMIN REGISTRATION
+const registerSuperAdmin = async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+
+    // Validate required fields
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Name, email, and password are required'
+      });
+    }
+
+    // Check if this is the first super admin or if current user is super admin
+    const superAdminCount = await User.countDocuments({ role: 'superAdmin' });
+    
+    if (superAdminCount === 0) {
+      // First super admin registration
+      const user = await User.create({ 
+        name, 
+        email, 
+        password, 
+        role: 'superAdmin',
+        registrationType: 'business',
+        registrationStep: 'completed',
+        documentVerificationStatus: 'verified'
+      });
+      
+      const token = generateToken(user);
+      user.password = undefined;
+      
+      return res.status(201).json({
+        success: true,
+        message: 'Super admin registered successfully',
+        user,
+        token
+      });
+    } else {
+      // Additional super admin creation by existing super admin
+      if (!req.user || req.user.role !== 'superAdmin') {
+        return res.status(403).json({
+          success: false,
+          message: 'Only an existing super admin can create another super admin'
+        });
+      }
+      
+      const user = await User.create({ 
+        name, 
+        email, 
+        password, 
+        role: 'superAdmin', 
+        registrationType: 'business',
+        createdBy: req.user._id,
+        registrationStep: 'completed',
+        documentVerificationStatus: 'verified'
+      });
+      
+      const token = generateToken(user);
+      user.password = undefined;
+      
+      return res.status(201).json({
+        success: true,
+        message: 'Super admin registered successfully',
+        user,
+        token
+      });
+    }
+
+  } catch (error) {
+    console.error('Super admin registration error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error during super admin registration',
+      error: error.message
+    });
+  }
+};
+
+// LOGIN FUNCTION
 const login = async (req, res) => {
   try {
     // Ensure req.body exists and is an object
@@ -381,6 +601,7 @@ const login = async (req, res) => {
     });
   }
 };
+
 const getProfile = async (req, res) => {
   try {
     const user = await User.findById(req.user._id).populate('assignedStore', 'name location');
@@ -398,6 +619,7 @@ const getProfile = async (req, res) => {
     });
   }
 };
+
 const updateProfile = async (req, res) => {
     try {
       // 1) define exactly what _can_ change
@@ -450,6 +672,7 @@ const updateProfile = async (req, res) => {
       });
     }
   };
+
 const getAllUsers = async (req, res) => {
     try {
       const { page = 1, limit = 10, status, search } = req.query;
@@ -707,6 +930,65 @@ const getAdmins = async (req, res) => {
   }
 };
 
+// Update document verification status (for admin use)
+const updateDocumentVerification = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { status, notes } = req.body;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    user.documentVerificationStatus = status;
+    if (notes) {
+      user.documentVerificationNotes = notes;
+    }
+
+    // Update verification status for individual documents
+    if (status === 'verified') {
+      if (user.documents.tradeLicense) {
+        user.documents.tradeLicense.verified = true;
+      }
+      if (user.documents.idDocument) {
+        user.documents.idDocument.verified = true;
+      }
+      // Handle monthly bank statements
+      if (user.documents.bankStatements && user.documents.bankStatements.length > 0) {
+        user.documents.bankStatements.forEach(statement => {
+          statement.verified = true;
+        });
+      }
+      // Handle single bank statement
+      if (user.documents.bankStatement) {
+        user.documents.bankStatement.verified = true;
+      }
+    }
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Document verification status updated successfully',
+      data: {
+        documentVerificationStatus: user.documentVerificationStatus,
+        documentVerificationNotes: user.documentVerificationNotes
+      }
+    });
+
+  } catch (error) {
+    console.error('Document verification update error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error during document verification update',
+      error: error.message
+    });
+  }
+};
 
 // Add a new address
 const addAddress = async (req, res) => {
@@ -1106,16 +1388,29 @@ const getWishlist = async (req, res) => {
 };
 
 module.exports = {
-  register,
+  // Registration functions
+  registerCustomer,
+  registerBusiness,
+  createAdmin,
+  registerSuperAdmin,
+  
+  // Authentication
   login,
+  
+  // Profile management
   getProfile,
   updateProfile,
+  updateTermsAgreement,
+  
+  // User management (Admin functions)
   getAllUsers,
   getUserById,
   updateUserStatus,
   deleteUser,
-  updateTermsAgreement,
   getAdmins,
+  updateDocumentVerification,
+  
+  // Address management
   addAddress,
   updateAddress,
   deleteAddress,
@@ -1123,8 +1418,9 @@ module.exports = {
   setShippingAndBillingSame,
   getAddresses,
   getUserAddress,
+  
+  // Wishlist management
   addToWishlist,
   removeFromWishlist,
-  getWishlist,
-  updateDocumentVerification
+  getWishlist
 };

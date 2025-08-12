@@ -29,6 +29,9 @@ function shapeProductForAdmin(product) {
     stock: totalStock,
     isAvailable: totalStock > 0,
     
+    // Featured status
+    featured: product.featured || false,
+    
     // Frozen details
     frozen: product.Frozen,
     frozenFrom: product.FrozenFrom,
@@ -162,6 +165,9 @@ const updateProduct = async (req, res) => {
     }
     if (req.body.description !== undefined) {
       updateData.Description = req.body.description;
+    }
+    if (req.body.featured !== undefined) {
+      updateData.featured = req.body.featured === 'true' || req.body.featured === true;
     }
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({
@@ -512,6 +518,53 @@ const getAllProductNames = async (req, res) => {
   }
 };
 
+// TOGGLE PRODUCT FEATURED STATUS
+const toggleProductFeatured = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id || id === 'undefined') {
+      return res.status(400).json({
+        success: false,
+        message: 'Product ID is required in the URL.'
+      });
+    }
+
+    // Find the product
+    const product = await Item.findOne({
+      $or: [{ _id: id }, { ItemCode: id }]
+    });
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found'
+      });
+    }
+
+    // Toggle featured status
+    const newFeaturedStatus = !product.featured;
+    product.featured = newFeaturedStatus;
+    await product.save();
+
+    // Return updated product
+    const updated = await Item.findById(product._id).populate('store', 'name');
+    const shaped = shapeProductForAdmin(updated);
+
+    return res.status(200).json({
+      success: true,
+      message: `Product ${newFeaturedStatus ? 'marked as featured' : 'unmarked as featured'} successfully`,
+      data: shaped
+    });
+  } catch (error) {
+    console.error('Error toggling product featured status:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to toggle product featured status',
+      error: error.message
+    });
+  }
+};
+
 module.exports = {
   getAllProducts,
   getProductById,
@@ -522,5 +575,6 @@ module.exports = {
   updateProductStock,
   getAllProductNames,
   getProductsByCategory,
-  suggestProductNames
+  suggestProductNames,
+  toggleProductFeatured
 };

@@ -29,6 +29,12 @@ const userSchema = new Schema({
     enum: ['superAdmin', 'admin', 'customer'],
     default: 'customer'
   },
+  // New field to distinguish registration type
+  registrationType: {
+    type: String,
+    enum: ['customer', 'business'],
+    default: 'customer'
+  },
   // Store assignment for admins
   assignedStore: {
     type: Schema.Types.ObjectId,
@@ -110,26 +116,40 @@ const userSchema = new Schema({
     type: Schema.Types.ObjectId,
     ref: 'Customer',
   },
-  // Document uploads for registration
+  // Document uploads for registration - updated to support multiple bank statements
   documents: {
     tradeLicense: {
       url: String,
       filename: String,
       uploadedAt: Date,
-      verified: { type: Boolean, default: false }
+      verified: { type: Boolean, default: false },
+      required: { type: Boolean, default: false }
     },
     idDocument: {
       url: String,
       filename: String,
       uploadedAt: Date,
-      verified: { type: Boolean, default: false }
+      verified: { type: Boolean, default: false },
+      required: { type: Boolean, default: false }
     },
+    // Single bank statement (for 6 months statement)
     bankStatement: {
       url: String,
       filename: String,
       uploadedAt: Date,
-      verified: { type: Boolean, default: false }
-    }
+      verified: { type: Boolean, default: false },
+      required: { type: Boolean, default: false }
+    },
+    // Multiple bank statements (for monthly statements)
+    bankStatements: [{
+      url: String,
+      filename: String,
+      uploadedAt: Date,
+      verified: { type: Boolean, default: false },
+      required: { type: Boolean, default: false },
+      month: String, // e.g., "2024-01", "2024-02"
+      _id: { type: Schema.Types.ObjectId, auto: true }
+    }]
   },
   // Document verification status
   documentVerificationStatus: {
@@ -138,6 +158,12 @@ const userSchema = new Schema({
     default: 'pending'
   },
   documentVerificationNotes: String,
+  // Registration step tracking
+  registrationStep: {
+    type: String,
+    enum: ['details', 'mandatory_documents', 'optional_documents', 'completed'],
+    default: 'details'
+  }
 }, {
   timestamps: true
 });
@@ -242,6 +268,31 @@ userSchema.methods.hasAgreedToLatestPrivacy = function() {
   const currentVersion = '1.0'; // This could be moved to environment variables
   return this.privacyPolicy.agreed && 
          this.privacyPolicy.version === currentVersion;
+};
+
+// Method to get all bank statements (both single and multiple)
+userSchema.methods.getAllBankStatements = function() {
+  const statements = [];
+  
+  // Add single bank statement if exists
+  if (this.documents.bankStatement && this.documents.bankStatement.url) {
+    statements.push({
+      ...this.documents.bankStatement,
+      type: 'single' // 6 months statement
+    });
+  }
+  
+  // Add multiple bank statements if exist
+  if (this.documents.bankStatements && this.documents.bankStatements.length > 0) {
+    this.documents.bankStatements.forEach(statement => {
+      statements.push({
+        ...statement.toObject(),
+        type: 'monthly'
+      });
+    });
+  }
+  
+  return statements;
 };
 
 module.exports = mongoose.model('User', userSchema);

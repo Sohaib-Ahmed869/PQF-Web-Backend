@@ -135,7 +135,7 @@ const documentUpload = multer({
 }).fields([
   { name: 'tradeLicense', maxCount: 1 },
   { name: 'idDocument', maxCount: 1 },
-  { name: 'bankStatement', maxCount: 1 }
+  { name: 'bankStatement', maxCount: 6 } // Allow up to 6 monthly statements
 ]);
 
 // Function to delete object from S3

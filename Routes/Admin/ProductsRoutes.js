@@ -11,7 +11,8 @@ const {
   updateProductStock,
   getAllProductNames,
   getProductsByCategory,
-  suggestProductNames
+  suggestProductNames,
+  toggleProductFeatured
   
 } = require('../../Controllers/Admin/ProductController')
 
@@ -30,5 +31,6 @@ router.put('/:id/stock', updateProductStock);
 router.get("/getNames",getAllProductNames)
 router.get('/by-category', getProductsByCategory);
 router.get('/suggest-names', suggestProductNames);
+router.put('/toggle-featured/:id', toggleProductFeatured);
 
 module.exports = router;

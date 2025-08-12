@@ -162,6 +162,12 @@ async function createRecurringOrder(parentOrder, invoice = null) {
       ],
       paymentMethod: parentOrder.paymentMethod,
       
+      // Time slot information
+      deliveryTimeSlot: parentOrder.deliveryTimeSlot,
+      deliveryDate: parentOrder.deliveryDate,
+      pickupTimeSlot: parentOrder.pickupTimeSlot,
+      pickupDate: parentOrder.pickupDate,
+      
       // Recurring order specific fields
       isRecurring: false, // This is a generated order, not the recurring template
       generatedFromRecurring: true,
@@ -297,7 +303,12 @@ async function createRecurringOrder(parentOrder, invoice = null) {
           shippingAddress: newOrder.shippingAddress,
           billingAddress: newOrder.billingAddress,
           isRecurring: false, // This is a generated order
-          fromRecurring: true // Flag to indicate this came from a recurring order
+          fromRecurring: true, // Flag to indicate this came from a recurring order
+          // Time slot information
+          deliveryTimeSlot: newOrder.deliveryTimeSlot,
+          deliveryDate: newOrder.deliveryDate,
+          pickupTimeSlot: newOrder.pickupTimeSlot,
+          pickupDate: newOrder.pickupDate
         };
         
         await sendOrderConfirmationEmail(
@@ -2014,6 +2025,13 @@ exports.createOrderAfterPayment = async (req, res) => {
         }
       ],
       paymentMethod: orderData.paymentMethod,
+      
+      // Time slot information
+      deliveryTimeSlot: orderData.deliveryTimeSlot || null,
+      deliveryDate: orderData.deliveryDate || null,
+      pickupTimeSlot: orderData.pickupTimeSlot || null,
+      pickupDate: orderData.pickupDate || null,
+      
       createdAt: new Date(),
     });
 
@@ -2263,7 +2281,12 @@ exports.createOrderAfterPayment = async (req, res) => {
         shippingAddress: orderData.shippingAddress,
         billingAddress: orderData.billingAddress,
         isRecurring: orderData.orderType === 'recurring',
-        recurringFrequency: orderData.orderType === 'recurring' ? orderData.recurringFrequency : null
+        recurringFrequency: orderData.orderType === 'recurring' ? orderData.recurringFrequency : null,
+        // Time slot information
+        deliveryTimeSlot: orderData.deliveryTimeSlot,
+        deliveryDate: orderData.deliveryDate,
+        pickupTimeSlot: orderData.pickupTimeSlot,
+        pickupDate: orderData.pickupDate
       };
       
       await sendOrderConfirmationEmail(
@@ -2292,7 +2315,41 @@ exports.createOrderAfterPayment = async (req, res) => {
       orderType: orderData.orderType,
       isRecurring: orderData.orderType === 'recurring',
       message: responseMessage,
-      estimatedDelivery: orderData.deliveryMethod === 'delivery' ? '3-5 business days' : 'Ready for pickup'
+      estimatedDelivery: orderData.deliveryMethod === 'delivery' ? 
+        (orderData.deliveryTimeSlot && orderData.deliveryDate ? 
+          `Delivery on ${new Date(orderData.deliveryDate).toLocaleDateString('en-US', { 
+            weekday: 'long', 
+            month: 'long', 
+            day: 'numeric' 
+          })} during ${(() => {
+            const timeSlots = {
+              '9-12': '9:00 AM - 12:00 PM',
+              '12-3': '12:00 PM - 3:00 PM',
+              '3-6': '3:00 PM - 6:00 PM',
+              '6-9': '6:00 PM - 9:00 PM'
+            };
+            return timeSlots[orderData.deliveryTimeSlot] || orderData.deliveryTimeSlot;
+          })()}` : 
+          '3-5 business days'
+        ) : orderData.deliveryMethod === 'pickup' && orderData.pickupTimeSlot && orderData.pickupDate ?
+          `Pickup on ${new Date(orderData.pickupDate).toLocaleDateString('en-US', { 
+            weekday: 'long', 
+            month: 'long', 
+            day: 'numeric' 
+          })} during ${(() => {
+            const timeSlots = {
+              '9-12': '9:00 AM - 12:00 PM',
+              '12-3': '12:00 PM - 3:00 PM',
+              '3-6': '3:00 PM - 6:00 PM',
+              '6-9': '6:00 PM - 9:00 PM'
+            };
+            return timeSlots[orderData.pickupTimeSlot] || orderData.pickupTimeSlot;
+          })()}` : 'Ready for pickup',
+      // Time slot information
+      deliveryTimeSlot: orderData.deliveryTimeSlot,
+      deliveryDate: orderData.deliveryDate,
+      pickupTimeSlot: orderData.pickupTimeSlot,
+      pickupDate: orderData.pickupDate
     };
 
     res.status(201).json(response);

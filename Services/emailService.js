@@ -146,6 +146,36 @@ ${orderData.paymentStatus === 'paid' ? 'Paid' : 'Pending'}
                   </p>
                 </div>
                 ` : ''}
+                
+                ${orderData.deliveryTimeSlot && orderData.deliveryDate ? `
+                <div style="margin-top: 20px;">
+                  <h4 style="margin-bottom: 10px; color: #404040;">Delivery Time</h4>
+                  <div style="background: #e3f2fd; padding: 15px; border-radius: 8px; border-left: 4px solid #2196f3;">
+                    <p style="margin: 5px 0; color: #1976d2; font-weight: 600;">
+                      ${new Date(orderData.deliveryDate).toLocaleDateString('en-US', { 
+                        weekday: 'long', 
+                        year: 'numeric', 
+                        month: 'long', 
+                        day: 'numeric' 
+                      })}
+                    </p>
+                    <p style="margin: 5px 0; color: #1976d2; font-weight: 600;">
+                      ${(() => {
+                        const timeSlots = {
+                          '9-12': '9:00 AM - 12:00 PM',
+                          '12-3': '12:00 PM - 3:00 PM',
+                          '3-6': '3:00 PM - 6:00 PM',
+                          '6-9': '6:00 PM - 9:00 PM'
+                        };
+                        return timeSlots[orderData.deliveryTimeSlot] || orderData.deliveryTimeSlot;
+                      })()}
+                    </p>
+                    <p style="margin: 5px 0; color: #1976d2; font-size: 14px;">
+                      We'll deliver your order during this time window
+                    </p>
+                  </div>
+                </div>
+                ` : ''}
               </div>
               
               <div style="margin: 30px 0;">
@@ -167,7 +197,14 @@ ${orderData.paymentStatus === 'paid' ? 'Paid' : 'Pending'}
               </p>
               
               <p style="font-size: 16px; font-weight: 300; color: #404040; line-height: 26px; margin: 16px 0;">
-                Estimated delivery: ${orderData.orderType === 'pickup' ? 'Ready for pickup' : '3-5 business days'}
+                ${orderData.deliveryTimeSlot && orderData.deliveryDate ? 
+                  `Your order will be delivered on ${new Date(orderData.deliveryDate).toLocaleDateString('en-US', { 
+                    weekday: 'long', 
+                    month: 'long', 
+                    day: 'numeric' 
+                  })} during your selected time slot.` : 
+                  orderData.orderType === 'pickup' ? 'Ready for pickup' : 'Estimated delivery: 3-5 business days'
+                }
               </p>
               
               <p style="font-size: 16px; font-weight: 300; color: #404040; line-height: 26px; margin: 16px 0;">

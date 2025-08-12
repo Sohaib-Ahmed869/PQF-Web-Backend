@@ -110,7 +110,12 @@ function flattenOrder(order) {
     trackingStatus: order.trackingStatus,
     trackingHistory: order.trackingHistory,
     dispute: order.dispute || { status: 'none' },
-    recurring: recurringInfo
+    recurring: recurringInfo,
+    // Time slot information
+    deliveryTimeSlot: order.deliveryTimeSlot,
+    deliveryDate: order.deliveryDate,
+    pickupTimeSlot: order.pickupTimeSlot,
+    pickupDate: order.pickupDate
   };
   if (order.shippingAddress) flattened.shippingAddress = order.shippingAddress;
   if (order.billingAddress) flattened.billingAddress = order.billingAddress;
@@ -189,7 +194,12 @@ async function flattenOrderWithPaymentIntent(order) {
     payment: paymentInfo, // Add all payment fields here
     dispute: order.dispute || { status: 'none' },
     return: order.return || { status: 'none' },
-    recurring: recurringInfo
+    recurring: recurringInfo,
+    // Time slot information
+    deliveryTimeSlot: order.deliveryTimeSlot,
+    deliveryDate: order.deliveryDate,
+    pickupTimeSlot: order.pickupTimeSlot,
+    pickupDate: order.pickupDate
   };
   if (order.shippingAddress) flattened.shippingAddress = order.shippingAddress;
   if (order.billingAddress) flattened.billingAddress = order.billingAddress;

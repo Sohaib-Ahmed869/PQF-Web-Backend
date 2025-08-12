@@ -209,6 +209,9 @@ const ItemSchema = new Schema(
     // Product description
     Description: { type: String },
 
+    // Featured product flag
+    featured: { type: Boolean, default: false },
+
     // Collections
     ItemPrices: [ItemPriceSchema],
     ItemWarehouseInfoCollection: [ItemWarehouseInfoSchema],
