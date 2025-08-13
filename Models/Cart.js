@@ -84,6 +84,10 @@ const CartSchema = new mongoose.Schema({
       type: String,
       trim: true,
       uppercase: true
+    },
+    isAutoApplied: {
+      type: Boolean,
+      default: false
     }
   }],
   metadata: {

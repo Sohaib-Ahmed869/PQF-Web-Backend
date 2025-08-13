@@ -72,6 +72,19 @@ router.get('/user/consumed', async (req, res) => {
   return PromotionController.getUserConsumedPromotions(req, res);
 });
 
+// Create test auto-apply promotion (Admin/SuperAdmin only)
+router.post('/test/auto-apply', async (req, res) => {
+  // Check if user has admin privileges
+  if (req.user.role !== 'admin' && req.user.role !== 'superAdmin') {
+    return res.status(403).json({
+      success: false,
+      error: 'Access denied. Admin privileges required.'
+    });
+  }
+  
+  return PromotionController.createTestAutoPromotion(req, res);
+});
+
 // Get promotion statistics (Admin/SuperAdmin only)
 router.get('/:id/stats', async (req, res) => {
   // Check if user has admin privileges

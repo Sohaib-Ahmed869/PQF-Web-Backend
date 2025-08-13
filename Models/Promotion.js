@@ -114,6 +114,16 @@ const PromotionSchema = new Schema({
     default: 1
   },
   
+  // Auto-application settings
+  autoApply: {
+    type: Boolean,
+    default: false
+  },
+  requiresCode: {
+    type: Boolean,
+    default: true
+  },
+  
   // Minimum order requirements
   minOrderAmount: {
     type: Number,
@@ -198,7 +208,7 @@ PromotionSchema.methods.canApplyToCart = function(cart, userId) {
     return false;
   }
   
-  // Check minimum order amount
+  // Check minimum order amount based on paid items only
   const cartTotal = cart.items.reduce((sum, item) => {
     // If item is free or has free quantity, only charge for the non-free portion
     if (item.isFreeItem) {
@@ -343,13 +353,29 @@ PromotionSchema.methods.applyBuyXGetY = function(cart) {
       continue;
     }
     
-    // Calculate how many free items the user gets
-    const sets = Math.floor(cartItem.quantity / buyQuantity);
+    // Calculate based on PAID quantity only (exclude free items from previous promotions)
+    let paidQuantity = cartItem.quantity;
+    
+    // If item has free quantity, subtract it to get only the paid quantity
+    if (cartItem.freeQuantity && cartItem.freeQuantity > 0) {
+      paidQuantity = cartItem.quantity - cartItem.freeQuantity;
+    }
+    
+    // If this is entirely a free item, skip it
+    if (cartItem.isFreeItem || paidQuantity <= 0) {
+      console.log('Skipping free item or item with no paid quantity:', product._id);
+      continue;
+    }
+    
+    // Calculate how many free items the user gets based on PAID quantity only
+    const sets = Math.floor(paidQuantity / buyQuantity);
     const freeItemsCount = sets * getQuantity;
     
     console.log('Calculated free items:', {
       productId: product._id,
-      quantity: cartItem.quantity,
+      totalQuantity: cartItem.quantity,
+      paidQuantity: paidQuantity,
+      existingFreeQuantity: cartItem.freeQuantity || 0,
       buyQuantity,
       getQuantity,
       sets,
@@ -412,8 +438,21 @@ PromotionSchema.methods.applyQuantityDiscount = function(cart) {
     return [];
   }
   
-  // Calculate total quantity of applicable items
-  const totalQuantity = applicableItems.reduce((sum, item) => sum + item.quantity, 0);
+  // Calculate total PAID quantity of applicable items (exclude free items)
+  const totalQuantity = applicableItems.reduce((sum, item) => {
+    // Skip entirely free items
+    if (item.isFreeItem) {
+      return sum;
+    }
+    
+    // Calculate paid quantity only
+    let paidQuantity = item.quantity;
+    if (item.freeQuantity && item.freeQuantity > 0) {
+      paidQuantity = item.quantity - item.freeQuantity;
+    }
+    
+    return sum + Math.max(0, paidQuantity);
+  }, 0);
   
   console.log('Total quantity of applicable items:', totalQuantity);
   
@@ -430,9 +469,20 @@ PromotionSchema.methods.applyQuantityDiscount = function(cart) {
     discount = discountAmount;
     console.log('Applying fixed amount discount:', discount);
   } else if (discountPercentage && discountPercentage > 0) {
-    // Percentage discount - calculate based on applicable items total
+    // Percentage discount - calculate based on PAID items total only
     const applicableItemsTotal = applicableItems.reduce((sum, item) => {
-      return sum + (item.price * item.quantity);
+      // Skip entirely free items
+      if (item.isFreeItem) {
+        return sum;
+      }
+      
+      // Calculate paid quantity only
+      let paidQuantity = item.quantity;
+      if (item.freeQuantity && item.freeQuantity > 0) {
+        paidQuantity = item.quantity - item.freeQuantity;
+      }
+      
+      return sum + (item.price * Math.max(0, paidQuantity));
     }, 0);
     discount = applicableItemsTotal * discountPercentage / 100;
     console.log('Applying percentage discount:', discount, 'on total:', applicableItemsTotal);
@@ -484,8 +534,16 @@ PromotionSchema.methods.applyCartTotalDiscount = function(cart) {
     const product = cartItem.product;
     
     if (this.isProductApplicable(product)) {
-      applicableCartTotal += cartItem.price * cartItem.quantity;
-      applicableItems.push(cartItem);
+      // Calculate based on PAID quantity only (exclude free items)
+      if (!cartItem.isFreeItem) {
+        let paidQuantity = cartItem.quantity;
+        if (cartItem.freeQuantity && cartItem.freeQuantity > 0) {
+          paidQuantity = cartItem.quantity - cartItem.freeQuantity;
+        }
+        
+        applicableCartTotal += cartItem.price * Math.max(0, paidQuantity);
+        applicableItems.push(cartItem);
+      }
     }
   }
   
@@ -659,6 +717,30 @@ PromotionSchema.statics.findActivePromotions = function(storeId) {
 // Static method to find applicable promotions for a cart
 PromotionSchema.statics.findApplicablePromotions = function(cart, storeId, userId) {
   return this.findActivePromotions(storeId).then(promotions => {
+    return promotions.filter(promotion => promotion.canApplyToCart(cart, userId));
+  });
+};
+
+// Static method to find auto-applicable promotions for a cart
+PromotionSchema.statics.findAutoApplicablePromotions = function(cart, storeId, userId) {
+  const now = new Date();
+  return this.find({
+    store: storeId,
+    isActive: true,
+    autoApply: true,
+    requiresCode: false,
+    startDate: { $lte: now },
+    endDate: { $gte: now },
+    type: { $in: ['buyXGetY', 'quantityDiscount'] } // Only auto-apply product-level promotions
+  })
+  .populate([
+    { path: 'applicableProducts', select: 'ItemName _id' },
+    { path: 'applicableCategories', select: 'name _id ItemsGroupCode' },
+    { path: 'excludedProducts', select: 'ItemName _id' },
+    { path: 'excludedCategories', select: 'name _id ItemsGroupCode' }
+  ])
+  .sort({ priority: -1 })
+  .then(promotions => {
     return promotions.filter(promotion => promotion.canApplyToCart(cart, userId));
   });
 };

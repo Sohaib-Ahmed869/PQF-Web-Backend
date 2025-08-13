@@ -15,6 +15,71 @@ const generateTrackingNumber = () => {
   return `${prefix}${timestamp}${random}`;
 };
 
+// Function to track promotion usage when order is confirmed
+async function trackPromotionUsageForOrder(order) {
+  try {
+    console.log('Tracking promotion usage for order:', order._id);
+    
+    if (!order.appliedPromotions || order.appliedPromotions.length === 0) {
+      console.log('No promotions applied to this order');
+      return;
+    }
+
+    for (const appliedPromo of order.appliedPromotions) {
+      try {
+        const promotion = await Promotion.findById(appliedPromo.promotionId);
+        if (!promotion) {
+          console.log('Promotion not found:', appliedPromo.promotionId);
+          continue;
+        }
+
+        // Increment usage count
+        promotion.currentUsage += 1;
+
+        // Add to usage history with order reference
+        promotion.usageHistory.push({
+          user: order.user,
+          order: order._id,
+          usedAt: new Date(),
+          discountAmount: appliedPromo.discountAmount || 0
+        });
+
+        await promotion.save();
+
+        // Create AppliedPromotion record for reporting
+        await AppliedPromotion.create({
+          promotion: promotion._id,
+          order: order._id,
+          user: order.user,
+          store: order.store,
+          code: appliedPromo.code,
+          type: promotion.type,
+          appliedDiscounts: order.appliedDiscounts || [],
+          totalDiscountAmount: appliedPromo.discountAmount || 0,
+          originalCartTotal: order.originalTotal || order.DocTotal,
+          finalCartTotal: order.finalTotal || order.DocTotal,
+          status: 'applied',
+          appliedAt: appliedPromo.appliedAt || new Date()
+        });
+
+        console.log('Tracked promotion usage:', {
+          promotionId: promotion._id,
+          orderId: order._id,
+          newUsageCount: promotion.currentUsage,
+          discountAmount: appliedPromo.discountAmount
+        });
+
+      } catch (promoError) {
+        console.error('Error tracking individual promotion:', appliedPromo.promotionId, promoError);
+      }
+    }
+
+    console.log('Promotion usage tracking completed for order:', order._id);
+  } catch (error) {
+    console.error('Error tracking promotion usage for order:', order._id, error);
+  }
+}
+
 // Stripe Webhook Handler
 exports.handleStripeWebhook = async (req, res) => {
   const sig = req.headers['stripe-signature'];
@@ -215,10 +280,28 @@ async function createRecurringOrder(parentOrder, invoice = null) {
               
               if (usageEntry) {
                 usageEntry.order = newOrder._id;
+                // Increment current usage for recurring orders as well
+                promotion.currentUsage += 1;
                 await promotion.save();
                 console.log('Updated promotion usageHistory with recurring order reference:', {
                   promotionId: promotion._id,
-                  orderId: newOrder._id
+                  orderId: newOrder._id,
+                  currentUsage: promotion.currentUsage
+                });
+              } else {
+                // Create new usage entry and increment current usage
+                promotion.currentUsage += 1;
+                promotion.usageHistory.push({
+                  user: parentOrder.user,
+                  order: newOrder._id,
+                  usedAt: new Date(),
+                  discountAmount: appliedPromotion.discountAmount || 0
+                });
+                await promotion.save();
+                console.log('Created new usage entry for recurring order:', {
+                  promotionId: promotion._id,
+                  orderId: newOrder._id,
+                  currentUsage: promotion.currentUsage
                 });
               }
             }
@@ -395,6 +478,9 @@ async function handlePaymentIntentSucceeded(paymentIntent) {
       
       await order.save();
       console.log('Order updated after payment success:', order._id);
+      
+      // Track promotion usage for this order
+      await trackPromotionUsageForOrder(order);
     }
 
     console.log('Payment intent succeeded processed successfully');
@@ -2111,11 +2197,14 @@ exports.createOrderAfterPayment = async (req, res) => {
               
               if (usageEntry) {
                 usageEntry.order = order._id;
+                // Increment current usage when a promotion is used
+                promotion.currentUsage += 1;
                 await promotion.save();
                 console.log('Updated promotion usageHistory with order reference:', {
                   promotionId: promotion._id,
                   orderId: order._id,
-                  usageEntryId: usageEntry._id
+                  usageEntryId: usageEntry._id,
+                  currentUsage: promotion.currentUsage
                 });
               } else {
                 // If no usage entry found, create one (this might happen for buyXGetY promotions)
@@ -2132,10 +2221,13 @@ exports.createOrderAfterPayment = async (req, res) => {
                   discountAmount: appliedPromotion.discountAmount || 0
                 });
                 
+                // Increment current usage when creating a new usage entry
+                promotion.currentUsage += 1;
                 await promotion.save();
                 console.log('Created new usage entry for promotion:', {
                   promotionId: promotion._id,
-                  orderId: order._id
+                  orderId: order._id,
+                  currentUsage: promotion.currentUsage
                 });
               }
             }

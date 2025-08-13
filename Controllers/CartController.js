@@ -112,11 +112,202 @@ async function getApplicablePromotionsForCart(cart, storeId, userId) {
   }
 }
 
+// Helper: Auto-apply eligible promotions to cart
+async function autoApplyPromotions(cart, storeId, userId) {
+  try {
+    console.log('Auto-applying promotions for cart:', cart._id);
+    
+    if (!storeId) {
+      console.log('No store ID provided, skipping auto-promotion application');
+      return cart;
+    }
+
+    // Get auto-applicable promotions
+    const autoPromotions = await Promotion.findAutoApplicablePromotions(cart, storeId, userId);
+    console.log('Found auto-applicable promotions:', autoPromotions.length);
+
+    // Store manual promotions separately and validate them
+    const manualPromotions = cart.appliedPromotions.filter(ap => !ap.isAutoApplied);
+    const validManualPromotions = [];
+    const invalidManualPromotions = [];
+
+    // Validate each manual promotion to see if it's still applicable
+    for (const manualPromo of manualPromotions) {
+      try {
+        const promotion = await Promotion.findById(manualPromo.promotion);
+        if (promotion && promotion.canApplyToCart(cart, userId)) {
+          // Check if the promotion still has applicable discounts
+          const testDiscounts = promotion.applyToCart(cart);
+          if (testDiscounts.length > 0) {
+            validManualPromotions.push(manualPromo);
+            console.log('Manual promotion still valid:', promotion.code);
+          } else {
+            invalidManualPromotions.push(manualPromo);
+            console.log('Manual promotion no longer has applicable discounts:', promotion.code);
+          }
+        } else {
+          invalidManualPromotions.push(manualPromo);
+          console.log('Manual promotion no longer valid:', promotion ? promotion.code : manualPromo.code);
+        }
+      } catch (error) {
+        console.error('Error validating manual promotion:', error);
+        invalidManualPromotions.push(manualPromo);
+      }
+    }
+
+    // Clean up usage tracking for invalid manual promotions
+    for (const invalidPromo of invalidManualPromotions) {
+      try {
+        const promotion = await Promotion.findById(invalidPromo.promotion);
+        if (promotion) {
+          console.log('Cleaning up usage tracking for invalid manual promotion:', promotion.code);
+          
+          // Decrement currentUsage if it was incremented (though it shouldn't be for cart-level)
+          if (promotion.currentUsage > 0) {
+            promotion.currentUsage -= 1;
+          }
+          
+          // Remove the usage history entry for this user that doesn't have an order reference
+          const userUsageIndex = promotion.usageHistory.findIndex(
+            usage => usage.user && usage.user.toString() === userId.toString() && !usage.order
+          );
+          
+          if (userUsageIndex !== -1) {
+            promotion.usageHistory.splice(userUsageIndex, 1);
+            console.log('Removed usage history entry for invalid manual promotion:', promotion._id);
+          }
+          
+          await promotion.save();
+        }
+
+        // Remove applied promotion records
+        await AppliedPromotion.deleteMany({
+          promotion: invalidPromo.promotion,
+          user: userId,
+          order: null // Only remove if no order is associated (cart-level application)
+        });
+        console.log('Removed AppliedPromotion records for invalid promotion:', invalidPromo.promotion);
+        
+      } catch (cleanupError) {
+        console.error('Error cleaning up invalid manual promotion:', cleanupError);
+      }
+    }
+
+    // Remove only auto-applied promotions and invalid manual promotions
+    cart.appliedPromotions = validManualPromotions;
+
+    // Reset free items and quantities from ALL previous applications (both auto and invalid manual)
+    cart.items = cart.items.filter(item => !item.isFreeItem);
+    
+    // Handle items with free quantities - remove if quantity becomes 0 or less
+    cart.items = cart.items.filter(item => {
+      if (item.freeQuantity && item.freeQuantity > 0) {
+        const newQuantity = item.quantity - item.freeQuantity;
+        if (newQuantity <= 0) {
+          // Remove item entirely if no paid quantity remains
+          return false;
+        } else {
+          // Update quantity and reset free quantity
+          item.quantity = newQuantity;
+          item.freeQuantity = 0;
+          return true;
+        }
+      }
+      return true;
+    });
+
+    // Apply each auto-promotion that meets criteria
+    for (const promotion of autoPromotions) {
+      console.log('Checking auto-promotion:', promotion.name, promotion.type);
+      
+      // Check if promotion still meets criteria (revalidate)
+      if (!promotion.canApplyToCart(cart, userId)) {
+        console.log('Promotion no longer meets criteria:', promotion.name);
+        continue;
+      }
+
+      // Apply the promotion
+      const appliedDiscounts = promotion.applyToCart(cart);
+      
+      if (appliedDiscounts.length > 0) {
+        console.log('Auto-applying promotion:', promotion.name, 'with', appliedDiscounts.length, 'discounts');
+        
+        // Calculate total discount amount
+        const totalDiscountAmount = appliedDiscounts.reduce((sum, discount) => sum + (discount.discountAmount || 0), 0);
+
+        // Handle buyXGetY promotions - add free items to cart
+        if (promotion.type === 'buyXGetY') {
+          for (const discount of appliedDiscounts) {
+            if (discount.type === 'buyXGetY' && discount.freeQuantity > 0) {
+              const productId = discount.productId;
+              const freeQuantity = discount.freeQuantity;
+
+              // Find the product in cart
+              const existingItemIndex = cart.items.findIndex(
+                item => item.product && item.product._id && item.product._id.toString() === productId.toString()
+              );
+
+              if (existingItemIndex > -1) {
+                // Add free quantity to existing item
+                const existingItem = cart.items[existingItemIndex];
+                existingItem.quantity += freeQuantity;
+                
+                if (!existingItem.freeQuantity) {
+                  existingItem.freeQuantity = 0;
+                }
+                existingItem.freeQuantity += freeQuantity;
+
+                console.log(`Added ${freeQuantity} free items to cart item. Total: ${existingItem.quantity}, Free: ${existingItem.freeQuantity}`);
+              } else {
+                // This shouldn't happen for buyXGetY of same item, but handle it
+                const Item = require('../Models/Product');
+                const product = await Item.findById(productId);
+                if (product) {
+                  cart.items.push({
+                    product: new mongoose.Types.ObjectId(productId),
+                    quantity: freeQuantity,
+                    price: getProductPrice(product),
+                    isFreeItem: true,
+                    freeQuantity: freeQuantity
+                  });
+                }
+              }
+            }
+          }
+        }
+
+        // Track applied promotion in cart (DON'T increment usage yet - only on order placement)
+        cart.appliedPromotions.push({
+          promotion: promotion._id,
+          appliedAt: new Date(),
+          discountAmount: totalDiscountAmount,
+          code: promotion.code,
+          isAutoApplied: true
+        });
+
+        console.log('Successfully auto-applied promotion:', promotion.name);
+      } else {
+        console.log('No discounts applicable for promotion:', promotion.name);
+      }
+    }
+
+    console.log('Auto-apply complete. Applied promotions:', cart.appliedPromotions.length);
+    return cart;
+  } catch (error) {
+    console.error('Error auto-applying promotions:', error);
+    return cart;
+  }
+}
+
 module.exports = {
   // Get current user's cart with promotions
   async getCart(req, res) {
     try {
-      const cart = await getOrCreateActiveCart(req.user._id);
+      let cart = await getOrCreateActiveCart(req.user._id);
+      
+      // Auto-apply eligible promotions before displaying
+      cart = await autoApplyPromotions(cart, cart.store, req.user._id);
+      await cart.save();
       
       // Ensure cart is populated
       await cart.populate([
@@ -132,19 +323,19 @@ module.exports = {
       // Get applicable promotions for display only (don't auto-apply)
       const applicablePromotions = await getApplicablePromotionsForCart(cart, cart.store, req.user._id);
       
-      // Get only EXPLICITLY applied promotions from cart.appliedPromotions
-      const explicitlyAppliedPromotions = [];
+      // Get ALL applied promotions from cart.appliedPromotions (both manual and auto)
+      const allAppliedPromotions = [];
       if (cart.appliedPromotions && cart.appliedPromotions.length > 0) {
         for (const appliedPromo of cart.appliedPromotions) {
           const promotion = await Promotion.findById(appliedPromo.promotion);
           if (promotion) {
-            explicitlyAppliedPromotions.push(promotion);
+            allAppliedPromotions.push(promotion);
           }
         }
       }
       
-      // Calculate totals with ONLY explicitly applied promotions
-      const totals = await calculateCartTotals(cart, explicitlyAppliedPromotions);
+      // Calculate totals with ALL applied promotions (manual + auto)
+      const totals = await calculateCartTotals(cart, allAppliedPromotions);
       
       const cartData = {
         ...cart.toObject(),
@@ -188,7 +379,7 @@ module.exports = {
       }
       
       // Get cart
-      const cart = await getOrCreateActiveCart(req.user._id, store);
+      let cart = await getOrCreateActiveCart(req.user._id, store);
       
       // Get current price
       const price = getProductPrice(product);
@@ -213,6 +404,10 @@ module.exports = {
       
       if (store) cart.store = store;
       cart.lastUpdated = new Date();
+      
+      // Auto-apply eligible promotions before saving
+      cart = await autoApplyPromotions(cart, cart.store, req.user._id);
+      
       await cart.save();
       
       // Populate and return updated cart
@@ -227,19 +422,19 @@ module.exports = {
       // Get applicable promotions for display only (don't auto-apply)
       const applicablePromotions = await getApplicablePromotionsForCart(cart, cart.store, req.user._id);
       
-      // Get only EXPLICITLY applied promotions from cart.appliedPromotions
-      const explicitlyAppliedPromotions = [];
+      // Get ALL applied promotions from cart.appliedPromotions (both manual and auto)
+      const allAppliedPromotions = [];
       if (cart.appliedPromotions && cart.appliedPromotions.length > 0) {
         for (const appliedPromo of cart.appliedPromotions) {
           const promotion = await Promotion.findById(appliedPromo.promotion);
           if (promotion) {
-            explicitlyAppliedPromotions.push(promotion);
+            allAppliedPromotions.push(promotion);
           }
         }
       }
       
-      // Calculate totals with ONLY explicitly applied promotions
-      const totals = await calculateCartTotals(cart, explicitlyAppliedPromotions);
+      // Calculate totals with ALL applied promotions (manual + auto)
+      const totals = await calculateCartTotals(cart, allAppliedPromotions);
       
       const cartData = {
         ...cart.toObject(),
@@ -270,7 +465,7 @@ module.exports = {
         return res.status(400).json({ success: false, error: 'Product ID is required' });
       }
       
-      const cart = await getOrCreateActiveCart(req.user._id, store);
+      let cart = await getOrCreateActiveCart(req.user._id, store);
       
       // Remove item
       cart.items = cart.items.filter(
@@ -278,6 +473,10 @@ module.exports = {
       );
       
       cart.lastUpdated = new Date();
+      
+      // Auto-apply eligible promotions before saving
+      cart = await autoApplyPromotions(cart, cart.store, req.user._id);
+      
       await cart.save();
       await cart.populate([
         'items.product',
@@ -290,19 +489,19 @@ module.exports = {
       // Get applicable promotions for display only (don't auto-apply)
       const applicablePromotions = await getApplicablePromotionsForCart(cart, cart.store, req.user._id);
       
-      // Get only EXPLICITLY applied promotions from cart.appliedPromotions
-      const explicitlyAppliedPromotions = [];
+      // Get ALL applied promotions from cart.appliedPromotions (both manual and auto)
+      const allAppliedPromotions = [];
       if (cart.appliedPromotions && cart.appliedPromotions.length > 0) {
         for (const appliedPromo of cart.appliedPromotions) {
           const promotion = await Promotion.findById(appliedPromo.promotion);
           if (promotion) {
-            explicitlyAppliedPromotions.push(promotion);
+            allAppliedPromotions.push(promotion);
           }
         }
       }
       
-      // Calculate totals with ONLY explicitly applied promotions
-      const totals = await calculateCartTotals(cart, explicitlyAppliedPromotions);
+      // Calculate totals with ALL applied promotions (manual + auto)
+      const totals = await calculateCartTotals(cart, allAppliedPromotions);
       
       const cartData = {
         ...cart.toObject(),
@@ -325,6 +524,8 @@ module.exports = {
   },
 
   // Update item quantity
+  // NOTE: The 'quantity' parameter represents the desired PAID quantity (excluding free items)
+  // The backend will recalculate and add any applicable free quantities via autoApplyPromotions
   async updateItem(req, res) {
     try {
       const { productId, quantity, store } = req.body;
@@ -343,7 +544,7 @@ module.exports = {
         });
       }
       
-      const cart = await getOrCreateActiveCart(req.user._id, store);
+      let cart = await getOrCreateActiveCart(req.user._id, store);
       
       // Find and update item
       const itemIndex = cart.items.findIndex(
@@ -361,11 +562,23 @@ module.exports = {
         // Remove item if quantity is 0
         cart.items.splice(itemIndex, 1);
       } else {
-        // Update quantity
-        cart.items[itemIndex].quantity = parseInt(quantity);
+        // Update PAID quantity only - reset free quantities first, then set new paid quantity
+        // The quantity parameter now represents the desired PAID quantity (not total)
+        const cartItem = cart.items[itemIndex];
+        
+        // Reset any existing free quantities
+        cartItem.freeQuantity = 0;
+        cartItem.isFreeItem = false;
+        
+        // Set the new paid quantity
+        cartItem.quantity = parseInt(quantity);
       }
       
       cart.lastUpdated = new Date();
+      
+      // Auto-apply eligible promotions before saving
+      cart = await autoApplyPromotions(cart, cart.store, req.user._id);
+      
       await cart.save();
       await cart.populate([
         'items.product',
@@ -378,19 +591,19 @@ module.exports = {
       // Get applicable promotions for display only (don't auto-apply)
       const applicablePromotions = await getApplicablePromotionsForCart(cart, cart.store, req.user._id);
       
-      // Get only EXPLICITLY applied promotions from cart.appliedPromotions
-      const explicitlyAppliedPromotions = [];
+      // Get ALL applied promotions from cart.appliedPromotions (both manual and auto)
+      const allAppliedPromotions = [];
       if (cart.appliedPromotions && cart.appliedPromotions.length > 0) {
         for (const appliedPromo of cart.appliedPromotions) {
           const promotion = await Promotion.findById(appliedPromo.promotion);
           if (promotion) {
-            explicitlyAppliedPromotions.push(promotion);
+            allAppliedPromotions.push(promotion);
           }
         }
       }
       
-      // Calculate totals with ONLY explicitly applied promotions
-      const totals = await calculateCartTotals(cart, explicitlyAppliedPromotions);
+      // Calculate totals with ALL applied promotions (manual + auto)
+      const totals = await calculateCartTotals(cart, allAppliedPromotions);
       
       const cartData = {
         ...cart.toObject(),
@@ -416,7 +629,7 @@ module.exports = {
   async clearCart(req, res) {
     try {
       const { store } = req.body;
-      const cart = await getOrCreateActiveCart(req.user._id, store);
+      let cart = await getOrCreateActiveCart(req.user._id, store);
       
       cart.items = [];
       cart.lastUpdated = new Date();
@@ -453,7 +666,7 @@ module.exports = {
         });
       }
       
-      const cart = await getOrCreateActiveCart(req.user._id);
+      let cart = await getOrCreateActiveCart(req.user._id);
       
       // Ensure cart is populated
       await cart.populate([
@@ -782,29 +995,12 @@ module.exports = {
       // Calculate total discount amount for usage tracking
       const totalDiscountAmount = appliedDiscounts.reduce((sum, discount) => sum + (discount.discountAmount || 0), 0);
       
-      // Update promotion usage tracking
-      try {
-        // Increment currentUsage
-        promotion.currentUsage += 1;
-        
-        // Add to usageHistory
-        promotion.usageHistory.push({
-          user: req.user._id,
-          order: null, // Will be updated when order is created
-          usedAt: new Date(),
-          discountAmount: totalDiscountAmount
-        });
-        
-        await promotion.save();
-        console.log('Promotion usage tracking updated:', {
-          promotionId: promotion._id,
-          currentUsage: promotion.currentUsage,
-          totalDiscountAmount: totalDiscountAmount
-        });
-      } catch (usageError) {
-        console.error('Error updating promotion usage tracking:', usageError);
-        // Don't fail the promotion application if usage tracking fails
-      }
+      // DON'T update promotion usage tracking here - only on order placement
+      // Usage will be tracked when order is actually placed
+      console.log('Promotion applied to cart (usage will be tracked on order placement):', {
+        promotionId: promotion._id,
+        totalDiscountAmount: totalDiscountAmount
+      });
       
       // Track applied promotion in cart
       try {
@@ -814,32 +1010,59 @@ module.exports = {
         );
         
         if (existingPromotionIndex === -1) {
-          // Add new applied promotion to cart
+          // Add new applied promotion to cart (manual promotion)
           cart.appliedPromotions.push({
             promotion: promotion._id,
             appliedAt: new Date(),
             discountAmount: totalDiscountAmount,
-            code: promotion.code
+            code: promotion.code,
+            isAutoApplied: false // Explicitly mark as manual
           });
         } else {
           // Update existing applied promotion
           cart.appliedPromotions[existingPromotionIndex].discountAmount = totalDiscountAmount;
           cart.appliedPromotions[existingPromotionIndex].appliedAt = new Date();
+          cart.appliedPromotions[existingPromotionIndex].isAutoApplied = false; // Ensure it's marked as manual
         }
         
         await cart.save();
         console.log('Applied promotion tracked in cart:', {
           cartId: cart._id,
           promotionId: promotion._id,
-          totalDiscountAmount: totalDiscountAmount
+          totalDiscountAmount: totalDiscountAmount,
+          isManual: true
         });
       } catch (cartError) {
         console.error('Error tracking applied promotion in cart:', cartError);
         // Don't fail the promotion application if cart tracking fails
       }
       
-      // Calculate totals
-      const totals = await calculateCartTotals(cart, [promotion]);
+      // After applying manual promotion, re-run auto-apply to check for additional auto promotions
+      cart = await autoApplyPromotions(cart, cart.store, req.user._id);
+      await cart.save();
+
+      // Re-populate after auto-apply
+      await cart.populate([
+        'items.product',
+        {
+          path: 'appliedPromotions.promotion',
+          select: 'name description type code'
+        }
+      ]);
+
+      // Get ALL applied promotions for final totals calculation
+      const allAppliedPromotions = [];
+      if (cart.appliedPromotions && cart.appliedPromotions.length > 0) {
+        for (const appliedPromo of cart.appliedPromotions) {
+          const promotion = await Promotion.findById(appliedPromo.promotion);
+          if (promotion) {
+            allAppliedPromotions.push(promotion);
+          }
+        }
+      }
+
+      // Calculate totals with ALL applied promotions (manual + auto)
+      const totals = await calculateCartTotals(cart, allAppliedPromotions);
       
       res.json({
         success: true,
@@ -852,9 +1075,13 @@ module.exports = {
             code: promotion.code
           },
           appliedDiscounts,
-          ...totals
+          cart: {
+            ...cart.toObject(),
+            ...totals
+          },
+          autoPromotionsAlsoApplied: cart.appliedPromotions.filter(ap => ap.isAutoApplied).length
         },
-        message: 'Promotion applied successfully'
+        message: `Promotion applied successfully${cart.appliedPromotions.filter(ap => ap.isAutoApplied).length > 0 ? ' (with additional auto-promotions)' : ''}`
       });
       
     } catch (error) {
@@ -870,7 +1097,7 @@ module.exports = {
   async getApplicablePromotions(req, res) {
     try {
       const { storeId } = req.query;
-      const cart = await getOrCreateActiveCart(req.user._id, storeId);
+      let cart = await getOrCreateActiveCart(req.user._id, storeId);
       
       const applicablePromotions = await getApplicablePromotionsForCart(cart, cart.store, req.user._id);
       
@@ -909,7 +1136,7 @@ module.exports = {
         });
       }
       
-      const cart = await getOrCreateActiveCart(req.user._id, store);
+      let cart = await getOrCreateActiveCart(req.user._id, store);
       
       // Process each guest cart item
       for (const guestItem of guestCartItems) {
@@ -955,19 +1182,19 @@ module.exports = {
       // Get applicable promotions for display only (don't auto-apply)
       const applicablePromotions = await getApplicablePromotionsForCart(cart, cart.store, req.user._id);
       
-      // Get only EXPLICITLY applied promotions from cart.appliedPromotions
-      const explicitlyAppliedPromotions = [];
+      // Get ALL applied promotions from cart.appliedPromotions (both manual and auto)
+      const allAppliedPromotions = [];
       if (cart.appliedPromotions && cart.appliedPromotions.length > 0) {
         for (const appliedPromo of cart.appliedPromotions) {
           const promotion = await Promotion.findById(appliedPromo.promotion);
           if (promotion) {
-            explicitlyAppliedPromotions.push(promotion);
+            allAppliedPromotions.push(promotion);
           }
         }
       }
       
-      // Calculate totals with ONLY explicitly applied promotions
-      const totals = await calculateCartTotals(cart, explicitlyAppliedPromotions);
+      // Calculate totals with ALL applied promotions (manual + auto)
+      const totals = await calculateCartTotals(cart, allAppliedPromotions);
       
       const cartData = {
         ...cart.toObject(),
@@ -1034,7 +1261,7 @@ module.exports = {
 async removePromotion(req, res) {
   try {
     const { promotionId } = req.params;
-    const cart = await getOrCreateActiveCart(req.user._id);
+    let cart = await getOrCreateActiveCart(req.user._id);
     
     // Ensure cart is populated
     await cart.populate([
@@ -1074,37 +1301,44 @@ async removePromotion(req, res) {
     
     const promotionToRemove = cart.appliedPromotions[promotionIndex];
     
-    // STEP 1: Update promotion usage tracking - DECREMENT and REMOVE USAGE HISTORY
-    try {
-      const promotion = await Promotion.findById(promotionId);
-      if (promotion) {
-        // Decrement currentUsage
-        if (promotion.currentUsage > 0) {
-          promotion.currentUsage -= 1;
+    // STEP 1: Check if this is an auto-applied promotion
+    const isAutoApplied = promotionToRemove.isAutoApplied;
+    console.log('Removing promotion:', {
+      promotionId: promotionId,
+      isAutoApplied: isAutoApplied,
+      code: promotionToRemove.code
+    });
+
+    // Only decrement usage for manual promotions (auto promotions don't track usage until order)
+    if (!isAutoApplied) {
+      try {
+        const promotion = await Promotion.findById(promotionId);
+        if (promotion) {
+          // Decrement currentUsage only for manual promotions
+          if (promotion.currentUsage > 0) {
+            promotion.currentUsage -= 1;
+          }
+          
+          // Remove the usage history entry for this user that doesn't have an order reference
+          const userUsageIndex = promotion.usageHistory.findIndex(
+            usage => usage.user && usage.user.toString() === req.user._id.toString() && !usage.order
+          );
+          
+          if (userUsageIndex !== -1) {
+            promotion.usageHistory.splice(userUsageIndex, 1);
+            console.log('Removed usage history entry for manual promotion:', promotion._id);
+          }
+          
+          await promotion.save();
+          console.log('Updated promotion usage tracking after manual removal:', {
+            promotionId: promotion._id,
+            newCurrentUsage: promotion.currentUsage
+          });
         }
-        
-        // Remove the usage history entry for this user that doesn't have an order reference
-        // or has an order reference but the order was created recently (for safety)
-        const userUsageIndex = promotion.usageHistory.findIndex(
-          usage => usage.user && usage.user.toString() === req.user._id.toString() && 
-          (!usage.order || (usage.order && usage.usedAt && new Date() - new Date(usage.usedAt) < 24 * 60 * 60 * 1000)) // within 24 hours
-        );
-        
-        if (userUsageIndex !== -1) {
-          promotion.usageHistory.splice(userUsageIndex, 1);
-          console.log('Removed usage history entry for user:', req.user._id, 'promotion:', promotion._id);
-        }
-        
-        await promotion.save();
-        console.log('Updated promotion usage tracking after removal:', {
-          promotionId: promotion._id,
-          newCurrentUsage: promotion.currentUsage,
-          remainingUsageHistory: promotion.usageHistory.length
-        });
+      } catch (usageError) {
+        console.error('Error updating promotion usage tracking during removal:', usageError);
+        // Continue with cart update even if usage tracking fails
       }
-    } catch (usageError) {
-      console.error('Error updating promotion usage tracking during removal:', usageError);
-      // Continue with cart update even if usage tracking fails
     }
     
     // STEP 2: Remove applied promotion record if it exists
@@ -1130,12 +1364,21 @@ async removePromotion(req, res) {
         // Remove free items that were added by this promotion
         cart.items = cart.items.filter(item => !item.isFreeItem || item.freeQuantity === 0);
         
-        // Reset freeQuantity for items that had free quantities added
-        cart.items.forEach(item => {
+        // Reset freeQuantity for items that had free quantities added - remove if quantity becomes 0
+        cart.items = cart.items.filter(item => {
           if (item.freeQuantity && item.freeQuantity > 0) {
-            item.quantity = Math.max(0, item.quantity - item.freeQuantity);
-            item.freeQuantity = 0;
+            const newQuantity = item.quantity - item.freeQuantity;
+            if (newQuantity <= 0) {
+              // Remove item entirely if no paid quantity remains
+              return false;
+            } else {
+              // Update quantity and reset free quantity
+              item.quantity = newQuantity;
+              item.freeQuantity = 0;
+              return true;
+            }
           }
+          return true;
         });
       }
     }
@@ -1176,7 +1419,7 @@ async removePromotion(req, res) {
 // Remove all promotions from cart - UPDATED VERSION
 async removeAllPromotions(req, res) {
   try {
-    const cart = await getOrCreateActiveCart(req.user._id);
+    let cart = await getOrCreateActiveCart(req.user._id);
     
     // Ensure cart is populated
     await cart.populate([
@@ -1230,12 +1473,21 @@ async removeAllPromotions(req, res) {
     // STEP 4: Remove all free items that were added by promotions
     cart.items = cart.items.filter(item => !item.isFreeItem);
     
-    // Reset freeQuantity for all items
-    cart.items.forEach(item => {
+    // Reset freeQuantity for all items - remove if quantity becomes 0
+    cart.items = cart.items.filter(item => {
       if (item.freeQuantity && item.freeQuantity > 0) {
-        item.quantity = Math.max(0, item.quantity - item.freeQuantity);
-        item.freeQuantity = 0;
+        const newQuantity = item.quantity - item.freeQuantity;
+        if (newQuantity <= 0) {
+          // Remove item entirely if no paid quantity remains
+          return false;
+        } else {
+          // Update quantity and reset free quantity
+          item.quantity = newQuantity;
+          item.freeQuantity = 0;
+          return true;
+        }
       }
+      return true;
     });
     
     await cart.save();
